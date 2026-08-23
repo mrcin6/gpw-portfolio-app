@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import os
 import tempfile
+import json
 from src.pdf_parser import parse_erste_pdf
 
 # Set page config for mobile friendliness
@@ -17,9 +18,22 @@ st.set_page_config(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_PATH = os.path.join(BASE_DIR, "data", "portfolio_history.csv")
 HOLDINGS_PATH = os.path.join(BASE_DIR, "data", "current_holdings.csv")
+SETTINGS_PATH = os.path.join(BASE_DIR, "data", "portfolio_settings.json")
 
 # Create data directory if it doesn't exist
 os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
+
+# Load settings for cumulative external deposits
+if os.path.exists(SETTINGS_PATH):
+    try:
+        with open(SETTINGS_PATH, "r") as f:
+            settings = json.load(f)
+    except Exception:
+        settings = {"total_deposits": 107466.94}
+else:
+    settings = {"total_deposits": 107466.94}
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(settings, f)
 
 # Custom styling for rich aesthetics and clean mobile looks
 st.markdown("""
@@ -59,6 +73,36 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📈 GPW Smart Assistant")
+
+# ==========================================
+# SIDEBAR - PORTFOLIO CONFIGURATION
+# ==========================================
+st.sidebar.header("⚙️ Zarządzanie Kapitałem")
+st.sidebar.markdown("Ustawienia wpłat zewnętrznych w celu wyliczenia **realnego zysku organicznego** (bez wpływu dopłat środków).")
+
+new_total_deposits = st.sidebar.number_input(
+    "Suma wpłat zewnętrznych (PLN)",
+    value=float(settings["total_deposits"]),
+    step=500.0,
+    help="Wpisz sumę wszystkich fizycznych wpłat na konto maklerskie z zewnątrz. Zysk będzie wyliczany jako: Wartość Portfela - Suma Wpłat.",
+    format="%.2f"
+)
+
+# Save settings and dynamically recalculate latest profit if deposits changed
+if new_total_deposits != settings["total_deposits"]:
+    settings["total_deposits"] = new_total_deposits
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(settings, f)
+    
+    if os.path.exists(HISTORY_PATH):
+        df_hist = pd.read_csv(HISTORY_PATH)
+        if not df_hist.empty:
+            df_hist.iloc[-1, df_hist.columns.get_loc("Wpłaty Skumulowane (PLN)")] = new_total_deposits
+            latest_val = df_hist.iloc[-1]["Wartość Całkowita (PLN)"]
+            df_hist.iloc[-1, df_hist.columns.get_loc("Zysk (PLN)")] = round(latest_val - new_total_deposits, 2)
+            df_hist.to_csv(HISTORY_PATH, index=False)
+            
+    st.rerun()
 
 # TAB NAVIGATION
 tab1, tab2, tab3 = st.tabs([
@@ -115,10 +159,9 @@ with tab3:
                     rep_date = parsed_data["report_date"]
                     
                     # 1. Update history
-                    df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Zysk (PLN)"])
+                    df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
                     df_history["Data"] = df_history["Data"].astype(str)
                     
-                    base_val = 107466.94  # Base baseline value (Q1 2026)
                     val = parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"]
                     
                     new_row = {
@@ -126,12 +169,13 @@ with tab3:
                         "Wartość Całkowita (PLN)": val,
                         "Wycena Akcji (PLN)": parsed_data["stocks_value"],
                         "Gotówka (PLN)": parsed_data["cash_val"] if "cash_val" in parsed_data else parsed_data.get("cash_value", 0.0),
-                        "Zysk (PLN)": round(val - base_val, 2)
+                        "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
+                        "Zysk (PLN)": round(val - settings["total_deposits"], 2)
                     }
                     
                     if rep_date in df_history["Data"].values:
-                        df_history.loc[df_history["Data"] == rep_date, ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Zysk (PLN)"]] = [
-                            new_row["Wartość Całkowita (PLN)"], new_row["Wycena Akcji (PLN)"], new_row["Gotówka (PLN)"], new_row["Zysk (PLN)"]
+                        df_history.loc[df_history["Data"] == rep_date, ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]] = [
+                            new_row["Wartość Całkowita (PLN)"], new_row["Wycena Akcji (PLN)"], new_row["Gotówka (PLN)"], new_row["Wpłaty Skumulowane (PLN)"], new_row["Zysk (PLN)"]
                         ]
                         st.success(f"Zaktualizowano dane dla raportu z dnia: {rep_date}!")
                     else:
@@ -201,13 +245,12 @@ with tab3:
             daily_delta_str = "Brak wcześniejszych danych"
             daily_delta_class = ""
             
-        # Calculate change vs base (Q1 2026 - first row)
-        base_row = df_history.iloc[0]
-        base_val = base_row["Wartość Całkowita (PLN)"]
-        total_change_pct = ((latest_val - base_val) / base_val) * 100
-        total_change_pln = latest_val - base_val
-        total_delta_str = f"{total_change_pln:+.2f} zł ({total_change_pct:+.2f}%) od startu (Q1 2026)"
-        total_delta_class = "delta-plus" if total_change_pln >= 0 else "delta-minus"
+        # Calculate change vs cumulative deposits (Organic Profit)
+        latest_deposits = latest_row["Wpłaty Skumulowane (PLN)"] if "Wpłaty Skumulowane (PLN)" in latest_row else settings["total_deposits"]
+        organic_profit_pln = latest_val - latest_deposits
+        total_change_pct = (organic_profit_pln / latest_deposits) * 100 if latest_deposits > 0 else 0.0
+        total_delta_str = f"{organic_profit_pln:+.2f} zł ({total_change_pct:+.2f}%) zysku netto bez wpłat"
+        total_delta_class = "delta-plus" if organic_profit_pln >= 0 else "delta-minus"
         
         # Display KPIs using custom HTML for beautiful mobile-first design (4 columns)
         col1, col2, col3, col4 = st.columns(4)
@@ -232,7 +275,7 @@ with tab3:
         with col3:
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-title">Skumulowany Zysk</div>
+                <div class="metric-title">Skumulowany Zysk Netto</div>
                 <div class="metric-value">{total_change_pct:+.2f}%</div>
                 <div class="metric-delta {total_delta_class}">{total_delta_str}</div>
             </div>
@@ -243,7 +286,7 @@ with tab3:
             <div class="metric-card" style="border-left-color: #FFC107;">
                 <div class="metric-title">Gotówka w Portfelu</div>
                 <div class="metric-value">{latest_cash:,.2f} PLN</div>
-                <div class="metric-delta" style="color: #6C757D;">Udział gotówki: {round((latest_cash/latest_val)*100, 2) if latest_val > 0 else 0}%</div>
+                <div class="metric-delta" style="color: #6C757D;">Wpłaty z zewnątrz: {latest_deposits:,.2f} zł</div>
             </div>
             """, unsafe_allow_html=True)
     else:
@@ -251,9 +294,9 @@ with tab3:
 
     st.markdown("---")
 
-    # 3. WYKRES EWOLUCJI PORTFELA W CZASIE (DWUWYMIAROWY: WARTOŚĆ vs ZYSK)
+    # 3. WYKRES EWOLUCJI PORTFELA W CZASIE (DWUWYMIAROWY: WARTOŚĆ vs ZYSK ORGANICZNY)
     if not df_history.empty:
-        st.subheader("Ewolucja Portfela i Skumulowanego Zysku")
+        st.subheader("Ewolucja Portfela i Zysku Organicznego (Bez Wpłat)")
         
         # Melt dataframe to make it suitable for Plotly Express multi-line
         df_plot = df_history.melt(
@@ -269,7 +312,7 @@ with tab3:
             x="Data", 
             y="Wartość (PLN)",
             color="Wskaźnik",
-            title="Ewolucja Wartości Portfela vs Zysk (Od Q1 2026)",
+            title="Ewolucja Wartości Portfela vs Zysk Organiczny (Od Q1 2026)",
             markers=True,
             color_discrete_map={
                 "Wartość Całkowita (PLN)": "#0066CC",
