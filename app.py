@@ -31,21 +31,22 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
         border-left: 5px solid #0066CC;
         margin-bottom: 10px;
+        min-height: 110px;
     }
     .metric-title {
-        font-size: 14px;
+        font-size: 13px;
         color: #6C757D;
         font-weight: bold;
         text-transform: uppercase;
         margin-bottom: 5px;
     }
     .metric-value {
-        font-size: 24px;
+        font-size: 22px;
         color: #212529;
         font-weight: bold;
     }
     .metric-delta {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: bold;
     }
     .delta-plus {
@@ -114,19 +115,23 @@ with tab3:
                     rep_date = parsed_data["report_date"]
                     
                     # 1. Update history
-                    df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)"])
+                    df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Zysk (PLN)"])
                     df_history["Data"] = df_history["Data"].astype(str)
+                    
+                    base_val = 107466.94  # Base baseline value (Q1 2026)
+                    val = parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"]
                     
                     new_row = {
                         "Data": rep_date,
-                        "Wartość Całkowita (PLN)": parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"],
+                        "Wartość Całkowita (PLN)": val,
                         "Wycena Akcji (PLN)": parsed_data["stocks_value"],
-                        "Gotówka (PLN)": parsed_data["cash_val"] if "cash_val" in parsed_data else parsed_data.get("cash_value", 0.0)
+                        "Gotówka (PLN)": parsed_data["cash_val"] if "cash_val" in parsed_data else parsed_data.get("cash_value", 0.0),
+                        "Zysk (PLN)": round(val - base_val, 2)
                     }
                     
                     if rep_date in df_history["Data"].values:
-                        df_history.loc[df_history["Data"] == rep_date, ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)"]] = [
-                            new_row["Wartość Całkowita (PLN)"], new_row["Wycena Akcji (PLN)"], new_row["Gotówka (PLN)"]
+                        df_history.loc[df_history["Data"] == rep_date, ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Zysk (PLN)"]] = [
+                            new_row["Wartość Całkowita (PLN)"], new_row["Wycena Akcji (PLN)"], new_row["Gotówka (PLN)"], new_row["Zysk (PLN)"]
                         ]
                         st.success(f"Zaktualizowano dane dla raportu z dnia: {rep_date}!")
                     else:
@@ -182,49 +187,60 @@ with tab3:
         latest_cash = latest_row["Gotówka (PLN)"]
         latest_date = latest_row["Data"]
         
-        # Calculate changes vs previous periods
+        # Calculate daily change (Wynik z ostatniego dnia vs dzień poprzedni)
         if len(df_history) >= 2:
             prev_row = df_history.iloc[-2]
             prev_val = prev_row["Wartość Całkowita (PLN)"]
-            val_change_pct = ((latest_val - prev_val) / prev_val) * 100
-            val_change_pln = latest_val - prev_val
-            val_delta_str = f"{val_change_pln:+.2f} PLN ({val_change_pct:+.2f}%) vs poprzedni okres"
-            val_delta_class = "delta-plus" if val_change_pln >= 0 else "delta-minus"
+            daily_change_pln = latest_val - prev_val
+            daily_change_pct = (daily_change_pln / prev_val) * 100
+            daily_delta_str = f"{daily_change_pln:+.2f} zł ({daily_change_pct:+.2f}%) vs wczoraj"
+            daily_delta_class = "delta-plus" if daily_change_pln >= 0 else "delta-minus"
         else:
-            val_delta_str = "Brak wcześniejszych danych"
-            val_delta_class = ""
+            daily_change_pln = 0.0
+            daily_change_pct = 0.0
+            daily_delta_str = "Brak wcześniejszych danych"
+            daily_delta_class = ""
             
         # Calculate change vs base (Q1 2026 - first row)
         base_row = df_history.iloc[0]
         base_val = base_row["Wartość Całkowita (PLN)"]
         total_change_pct = ((latest_val - base_val) / base_val) * 100
         total_change_pln = latest_val - base_val
-        total_delta_str = f"{total_change_pln:+.2f} PLN ({total_change_pct:+.2f}%) od startu (Q1 2026)"
+        total_delta_str = f"{total_change_pln:+.2f} zł ({total_change_pct:+.2f}%) od startu (Q1 2026)"
         total_delta_class = "delta-plus" if total_change_pln >= 0 else "delta-minus"
         
-        # Display KPIs using custom HTML for beautiful mobile-first design
-        col1, col2, col3 = st.columns(3)
+        # Display KPIs using custom HTML for beautiful mobile-first design (4 columns)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-title">Wycena Portfela ({latest_date})</div>
                 <div class="metric-value">{latest_val:,.2f} PLN</div>
-                <div class="metric-delta {val_delta_class}">{val_delta_str}</div>
+                <div class="metric-delta {daily_delta_class}">Sesja: {daily_change_pln:+.2f} PLN</div>
             </div>
             """, unsafe_allow_html=True)
             
         with col2:
             st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">Wynik od startu (Q1 2026)</div>
-                <div class="metric-value">{total_change_pct:+.2f}%</div>
-                <div class="metric-delta {total_delta_class}">{total_delta_str}</div>
+            <div class="metric-card" style="border-left-color: #28A745;">
+                <div class="metric-title">Wynik Ostatniego Dnia</div>
+                <div class="metric-value">{daily_change_pln:+.2f} PLN</div>
+                <div class="metric-delta {daily_delta_class}">{daily_delta_str}</div>
             </div>
             """, unsafe_allow_html=True)
             
         with col3:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #28A745;">
+            <div class="metric-card">
+                <div class="metric-title">Skumulowany Zysk</div>
+                <div class="metric-value">{total_change_pct:+.2f}%</div>
+                <div class="metric-delta {total_delta_class}">{total_delta_str}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with col4:
+            st.markdown(f"""
+            <div class="metric-card" style="border-left-color: #FFC107;">
                 <div class="metric-title">Gotówka w Portfelu</div>
                 <div class="metric-value">{latest_cash:,.2f} PLN</div>
                 <div class="metric-delta" style="color: #6C757D;">Udział gotówki: {round((latest_cash/latest_val)*100, 2) if latest_val > 0 else 0}%</div>
@@ -235,26 +251,39 @@ with tab3:
 
     st.markdown("---")
 
-    # 3. WYKRES EWOLUCJI PORTFELA W CZASIE
+    # 3. WYKRES EWOLUCJI PORTFELA W CZASIE (DWUWYMIAROWY: WARTOŚĆ vs ZYSK)
     if not df_history.empty:
-        st.subheader("Ewolucja Wartości Portfela")
+        st.subheader("Ewolucja Portfela i Skumulowanego Zysku")
         
-        # Plotly chart
+        # Melt dataframe to make it suitable for Plotly Express multi-line
+        df_plot = df_history.melt(
+            id_vars=["Data"],
+            value_vars=["Wartość Całkowita (PLN)", "Zysk (PLN)"],
+            var_name="Wskaźnik",
+            value_name="Wartość (PLN)"
+        )
+        
+        # Plotly multi-line chart
         fig = px.line(
-            df_history, 
+            df_plot, 
             x="Data", 
-            y="Wartość Całkowita (PLN)",
-            title="Wzrost Wartości Portfela (Erste BM)",
+            y="Wartość (PLN)",
+            color="Wskaźnik",
+            title="Ewolucja Wartości Portfela vs Zysk (Od Q1 2026)",
             markers=True,
-            color_discrete_sequence=["#0066CC"]
+            color_discrete_map={
+                "Wartość Całkowita (PLN)": "#0066CC",
+                "Zysk (PLN)": "#28A745"
+            }
         )
         fig.update_layout(
             hovermode="x unified", 
             margin=dict(l=10, r=10, t=40, b=10),
-            xaxis_title="Data Raportu",
-            yaxis_title="Wartość Całkowita (PLN)",
+            xaxis_title="Data",
+            yaxis_title="Wartość (PLN)",
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             yaxis=dict(gridcolor='#E2E2E2'),
             xaxis=dict(gridcolor='#E2E2E2')
         )
@@ -273,7 +302,6 @@ with tab3:
         
         with col_pie:
             # Pie chart for portfolio structure
-            # To avoid clutter on mobile, only show names for holdings > 2.5% share
             df_pie = df_holdings.copy()
             df_pie.loc[df_pie['Udział (%)'] < 2.5, 'Spółka'] = 'Inne'
             
