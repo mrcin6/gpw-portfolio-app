@@ -297,10 +297,13 @@ with tab1:
             ev_val = f"{row['ev_ebitda']:.2f}" if row['ev_ebitda'] is not None else "N/A"
             dy_val = f"{row['dy']:.2f}%" if row['dy'] is not None and row['dy'] > 0 else "0.00%"
             price_val = f"{row['price']:,.2f} zł" if row['price'] is not None else "N/A"
-            is_l3 = "L3" in row['source']
+            is_l3 = "Lokalna" in row['source']
             trend_label = "&#x1F4C8; Wzrostowy" if row['trend_score'] == 100 else "&#x1F4C9; Spadkowy"
             trend_color = "#27ae60" if row['trend_score'] == 100 else "#e74c3c"
-            src_color = "#7c3aed" if "Premium" in row['source'] else ("#2563eb" if "Yahoo" in row['source'] else "#6b7280")
+            src_color = ("#7c3aed" if "Premium" in row['source']
+                         else "#16a34a" if "Biznesradar" in row['source']
+                         else "#2563eb" if "Yahoo" in row['source']
+                         else "#6b7280")
             if is_l3:
                 score_cell = '<span style="color:#9ca3af;font-size:12px;font-style:italic;">—</span>'
                 recom_cell = '<span style="border:1.5px solid #d1d5db;color:#9ca3af;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:600;">Brak danych</span>'

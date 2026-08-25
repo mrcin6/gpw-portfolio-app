@@ -1,3 +1,4 @@
+import re
 import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
@@ -50,7 +51,7 @@ YFIN_TICKERS = {
     "LUBAWA":    "LBW.WA",
     "PKPCARGO":  "PKC.WA",
     "RANKPROGR": "RNK.WA",
-    "STAPORKOW": "STP.WA",
+    # STAPORKOW: STP.WA = STALPROD (wrong company) — price comes from Biznesradar
     "ZREMB":     "ZRM.WA",
     # Legacy
     "SYNEKTIK":  "SNT.WA",
@@ -165,8 +166,10 @@ class StockwatchScraper:
             return None
 
     def fetch_yfinance_fallback(self, ticker):
-        """Fetches fundamental ratios and price from Yahoo Finance as level-2 fallback"""
-        symbol = YFIN_TICKERS.get(ticker, f"{ticker}.WA")
+        """Fetches fundamental ratios and price from Yahoo Finance as level-3 fallback"""
+        symbol = YFIN_TICKERS.get(ticker)
+        if not symbol:
+            return None
         try:
             yft = yf.Ticker(symbol)
             info = yft.info
@@ -200,8 +203,68 @@ class StockwatchScraper:
             logger.error(f"Error fetching Yahoo Finance fallback for {ticker}: {str(e)}")
             return None
 
+    def fetch_biznesradar(self, ticker):
+        """Level-2 fallback: scrapes fundamental ratios and price from Biznesradar.pl"""
+        url = f"https://www.biznesradar.pl/wskazniki-wartosci-rynkowej/{ticker}"
+        try:
+            r = self.session.get(url, headers=self.headers, timeout=10)
+            if r.status_code != 200:
+                return None
+            soup = BeautifulSoup(r.text, "html.parser")
+
+            label_map = {
+                "Kurs": "price",
+                "Cena / Zysk": "c_z",
+                "Cena / Wartość księgowa": "c_wk",
+                "EV / EBITDA": "ev_ebitda",
+            }
+            result = {}
+
+            for tr in soup.find_all("tr"):
+                first_td = tr.find("td", class_="f")
+                if not first_td:
+                    continue
+                label = first_td.get_text(strip=True)
+                field = label_map.get(label)
+                if field is None:
+                    continue
+
+                newest_td = tr.find("td", class_="newest")
+                if not newest_td:
+                    h_tds = [td for td in tr.find_all("td", class_="h") if td.get_text(strip=True)]
+                    if not h_tds:
+                        continue
+                    newest_td = h_tds[-1]
+
+                raw = newest_td.get_text(strip=True).split("~branża")[0]
+                # Extract leading number (handles "7,99" or "448,90" or "1,55r/r+1.37%...")
+                m = re.match(r"^-?[\d]+(?:,[\d]+)?", raw.strip())
+                if m:
+                    result[field] = round(float(m.group().replace(",", ".")), 2)
+
+            if not result.get("c_z") and not result.get("c_wk") and not result.get("ev_ebitda"):
+                return None
+
+            # DY and live price from yfinance (Biznesradar wskazniki Kurs = quarterly snapshot, not live)
+            yfin_data = self.fetch_yfinance_fallback(ticker)
+            result["dy"] = yfin_data.get("dy", 0.0) if yfin_data else 0.0
+            # Prefer yfinance live price; keep Biznesradar kurs only when yfinance has no data
+            if yfin_data and yfin_data.get("price"):
+                result["price"] = yfin_data["price"]
+            # else: result["price"] already set from Biznesradar Kurs row (small-cap fallback)
+
+            for field in ["c_z", "c_wk", "ev_ebitda", "dy", "price"]:
+                result.setdefault(field, None)
+            if result["dy"] is None:
+                result["dy"] = 0.0
+
+            return result
+        except Exception as e:
+            logger.error(f"Biznesradar fetch error for {ticker}: {e}")
+            return None
+
     def fetch_mock_fallback(self, ticker):
-        """Level-3 fallback: pre-programmed realistic ratios with deterministic noise"""
+        """Level-4 fallback: pre-programmed realistic ratios with deterministic noise"""
         base = STATIC_FALLBACKS.get(ticker, {"c_z": 12.0, "c_wk": 1.5, "ev_ebitda": 8.0, "dy": 3.0, "price": 100.0})
         # Add a tiny random fluctuation of +/-2% to make it feel "live"
         noise = 1.0 + random.uniform(-0.02, 0.02)
@@ -215,36 +278,44 @@ class StockwatchScraper:
         }
 
     def get_indicators(self, ticker):
-        """Main method implementing 3-level data retrieval architecture"""
+        """Main method implementing 4-level data retrieval architecture"""
         slug = STOCKWATCH_SLUGS.get(ticker)
-        
-        # Level 1: Stockwatch Premium Scraping (if PHPSESSID provided)
+
+        # Level 1: Stockwatch Premium
         if self.session_cookie and slug:
             data = self.fetch_stockwatch_html_indicators(slug)
             if data and all(data.get(k) is not None for k in ["c_z", "c_wk", "ev_ebitda"]):
-                # Fetch price from Yahoo to complete data
                 price_data = self.fetch_yfinance_fallback(ticker)
                 data["price"] = price_data["price"] if price_data else STATIC_FALLBACKS.get(ticker, {}).get("price", 100.0)
                 data["source"] = "Stockwatch Premium (L1)"
                 data["status"] = "Success"
                 return data
 
-        # Level 2: Yahoo Finance API Fallback
+        # Level 2: Biznesradar.pl (real fundamentals, no auth required)
+        br_data = self.fetch_biznesradar(ticker)
+        if br_data and any(br_data.get(k) is not None for k in ["c_z", "c_wk", "ev_ebitda"]):
+            br_data["source"] = "Biznesradar.pl (L2)"
+            br_data["status"] = "Success (Fallback)"
+            return br_data
+
+        # Level 3: Yahoo Finance API
         yfin_data = self.fetch_yfinance_fallback(ticker)
-        if yfin_data and all(yfin_data.get(k) is not None for k in ["c_z", "c_wk", "ev_ebitda"]):
-            yfin_data["source"] = "Yahoo Finance API (L2)"
+        if yfin_data and any(yfin_data.get(k) is not None for k in ["c_z", "c_wk", "ev_ebitda"]):
+            yfin_data["source"] = "Yahoo Finance (L3)"
             yfin_data["status"] = "Success (Fallback)"
             return yfin_data
 
-        # Level 3: Static Pre-programmed Fallback
+        # Level 4: Static Pre-programmed Fallback (no recommendations shown)
         mock_data = self.fetch_mock_fallback(ticker)
-        mock_data["source"] = "Lokalna Baza Danych (L3)"
-        mock_data["status"] = "Fallback (Offline/No Auth)"
+        mock_data["source"] = "Lokalna Baza Danych (L4)"
+        mock_data["status"] = "Fallback (Offline)"
         return mock_data
 
     def get_technical_trend(self, ticker):
         """Calculates moving average (SMA50) technical trend with robust fallbacks"""
-        symbol = YFIN_TICKERS.get(ticker, f"{ticker}.WA")
+        symbol = YFIN_TICKERS.get(ticker)
+        if not symbol:
+            return 70  # neutral default when no yfinance symbol available
         try:
             yft = yf.Ticker(symbol)
             # Fetch 3 months of daily history to calculate SMA50
