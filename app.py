@@ -4,7 +4,9 @@ import plotly.express as px
 import os
 import tempfile
 import json
+import yfinance as yf
 from src.pdf_parser import parse_erste_pdf
+from src.stockwatch_scraper import StockwatchScraper, YFIN_TICKERS
 
 # Set page config for mobile friendliness
 st.set_page_config(
@@ -23,17 +25,20 @@ SETTINGS_PATH = os.path.join(BASE_DIR, "data", "portfolio_settings.json")
 # Create data directory if it doesn't exist
 os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
 
-# Load settings for cumulative external deposits
+# Load settings for cumulative external deposits and Stockwatch session
 if os.path.exists(SETTINGS_PATH):
     try:
         with open(SETTINGS_PATH, "r") as f:
             settings = json.load(f)
     except Exception:
-        settings = {"total_deposits": 107466.94}
+        settings = {"total_deposits": 107466.94, "phpsessid": ""}
 else:
-    settings = {"total_deposits": 107466.94}
+    settings = {"total_deposits": 107466.94, "phpsessid": ""}
     with open(SETTINGS_PATH, "w") as f:
         json.dump(settings, f)
+
+if "phpsessid" not in settings:
+    settings["phpsessid"] = ""
 
 # Custom styling for rich aesthetics and clean mobile looks
 st.markdown("""
@@ -104,6 +109,21 @@ if new_total_deposits != settings["total_deposits"]:
             
     st.rerun()
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔑 Autoryzacja Stockwatch")
+new_phpsessid = st.sidebar.text_input(
+    "Ciasteczko PHPSESSID",
+    value=settings.get("phpsessid", ""),
+    type="password",
+    help="Wpisz wartość ciasteczka PHPSESSID z zalogowanej sesji na Stockwatch.pl, aby pobierać najświeższe wskaźniki giełdowe."
+)
+
+if new_phpsessid != settings.get("phpsessid", ""):
+    settings["phpsessid"] = new_phpsessid
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(settings, f)
+    st.rerun()
+
 # TAB NAVIGATION
 tab1, tab2, tab3 = st.tabs([
     "☀️ Rekomendacje 8:00", 
@@ -112,29 +132,301 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 # ==========================================
-# TAB 1 & 2: PLACEHOLDERS
+# TAB 1 & 2: REKOMENDACJE I STRATEGIA
 # ==========================================
 with tab1:
     st.header("☀️ Rekomendacje Sesyjne (Stockwatch 8:00)")
-    st.info("Moduł w przygotowaniu (Iteracja 2). Będzie gotowy po skonfigurowaniu integracji ze Stockwatch Premium.")
-    
-    st.subheader("Jak to będzie działać?")
-    st.markdown("""
-    1. **Scrapowanie:** Codziennie o 08:00 system pobierze aktualne wskaźniki (C/Z, C/WK, EV/EBITDA), omówienia wyników oraz wpisy z forów dla Twojej listy spółek ze **Stockwatch.pl**.
-    2. **Analiza Fundamentalna:** GPW SME przeliczy punkty merytoryczne (Score 0-100) na bazie ustalonych reguł.
-    3. **Rekomendacje:** Otrzymasz jasny wykaz: **KUPUJ / TRZYMAJ / SPRZEDAJ** wraz z uzasadnieniem przed otwarciem sesji giełdowej o 09:00.
-    """)
+    st.markdown("System pobierania i wieloczynnikowej analizy wskaźników giełdowych przed otwarciem sesji o 9:00.")
+
+    WATCHLIST_PATH = os.path.join(BASE_DIR, "config", "watchlist.json")
+    if os.path.exists(WATCHLIST_PATH):
+        try:
+            with open(WATCHLIST_PATH, "r") as f:
+                watchlist = json.load(f)
+        except Exception:
+            watchlist = ["KRUK", "LPP", "GRODNO", "RYVU", "SYNEKTIK", "MODIVO", "NEWAG", "GPW", "SEKO", "DOMDEV", "XTB"]
+    else:
+        watchlist = ["KRUK", "LPP", "GRODNO", "RYVU", "SYNEKTIK", "MODIVO", "NEWAG", "GPW", "SEKO", "DOMDEV", "XTB"]
+
+    if "recommendations_data" not in st.session_state:
+        st.session_state["recommendations_data"] = None
+
+    col_btn, col_info = st.columns([1, 2])
+    with col_btn:
+        if st.button("🔄 Uruchom Analizę Rekomendacji", use_container_width=True, type="primary"):
+            with st.spinner("Pobieranie i analiza wskaźników z portalów Stockwatch i Yahoo..."):
+                scraper = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
+                recom_data = []
+                for ticker in watchlist:
+                    indicators = scraper.get_indicators(ticker)
+                    trend_score = scraper.get_technical_trend(ticker)
+                    score = scraper.calculate_score(indicators, trend_score)
+                    recom = scraper.get_recommendation(score)
+                    recom_data.append({
+                        "ticker": ticker,
+                        "c_z": indicators.get("c_z"),
+                        "c_wk": indicators.get("c_wk"),
+                        "ev_ebitda": indicators.get("ev_ebitda"),
+                        "dy": indicators.get("dy"),
+                        "price": indicators.get("price"),
+                        "trend_score": trend_score,
+                        "score": score,
+                        "action": recom["action"],
+                        "color": recom["color"],
+                        "text_color": recom["text_color"],
+                        "source": indicators.get("source", "Nieznane")
+                    })
+                st.session_state["recommendations_data"] = recom_data
+                st.success("Analiza wskaźnikowa zakończona pomyślnie!")
+                st.rerun()
+
+    with col_info:
+        st.markdown(f"""
+        * **Watchlist:** `{', '.join(watchlist)}`
+        * **Ciasteczko PHPSESSID:** {"🔑 Podane (L1 Premium Aktywne)" if settings.get("phpsessid") else "⚠️ Brak (L2/L3 Fallback)"}
+        * **Wagi modelu:** C/Z (30%), C/WK (20%), EV/EBITDA (20%), Dywidenda (10%), Trend SMA50 (20%)
+        """)
+
+    st.markdown("---")
+
+    if st.session_state["recommendations_data"] is not None:
+        recom_list = st.session_state["recommendations_data"]
+        
+        # HTML Table for rich aesthetics
+        html_table = """
+        <table style="width:100%; border-collapse: collapse; margin-top: 10px; background-color: #FFFFFF; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+            <thead>
+                <tr style="background-color: #0F1D36; color: #FFFFFF; font-weight: bold; border-bottom: 3px solid #0066CC; text-align: left;">
+                    <th style="padding: 12px; font-size: 13px;">Spółka</th>
+                    <th style="padding: 12px; font-size: 13px;">Kurs Bieżący</th>
+                    <th style="padding: 12px; font-size: 13px; text-align: center;">C/Z</th>
+                    <th style="padding: 12px; font-size: 13px; text-align: center;">C/WK</th>
+                    <th style="padding: 12px; font-size: 13px; text-align: center;">EV/EBITDA</th>
+                    <th style="padding: 12px; font-size: 13px; text-align: center;">Dywidenda</th>
+                    <th style="padding: 12px; font-size: 13px;">Trend SMA50</th>
+                    <th style="padding: 12px; font-size: 13px; text-align: center;">Score</th>
+                    <th style="padding: 12px; font-size: 13px; text-align: center;">Rekomendacja</th>
+                    <th style="padding: 12px; font-size: 12px; text-align: center;">Źródło</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+        
+        for row in recom_list:
+            cz_val = f"{row['c_z']:.2f}" if row['c_z'] is not None and row['c_z'] != 0 else ("Strata" if row['c_z'] is not None and row['c_z'] < 0 else "N/A")
+            cwk_val = f"{row['c_wk']:.2f}" if row['c_wk'] is not None else "N/A"
+            ev_val = f"{row['ev_ebitda']:.2f}" if row['ev_ebitda'] is not None else "N/A"
+            dy_val = f"{row['dy']:.2f}%" if row['dy'] is not None and row['dy'] > 0 else "0.00%"
+            price_val = f"{row['price']:,.2f} zł" if row['price'] is not None else "N/A"
+            trend_label = "📈 Wzrostowy" if row['trend_score'] == 100 else "📉 Spadkowy/Konsol."
+            trend_color = "#28A745" if row['trend_score'] == 100 else "#DC3545"
+            
+            src_color = "#6F42C1" if "Premium" in row['source'] else ("#0066CC" if "Yahoo" in row['source'] else "#6C757D")
+            
+            html_table += f"""
+                <tr style="border-bottom: 1px solid #E2E2E2; font-size: 13px; font-weight: 500; color: #212529;">
+                    <td style="padding: 12px; font-weight: bold; color: #0F1D36;">{row['ticker']}</td>
+                    <td style="padding: 12px; font-weight: bold;">{price_val}</td>
+                    <td style="padding: 12px; text-align: center;">{cz_val}</td>
+                    <td style="padding: 12px; text-align: center;">{cwk_val}</td>
+                    <td style="padding: 12px; text-align: center;">{ev_val}</td>
+                    <td style="padding: 12px; text-align: center; color: #28A745; font-weight: bold;">{dy_val}</td>
+                    <td style="padding: 12px; color: {trend_color}; font-weight: bold;">{trend_label}</td>
+                    <td style="padding: 12px; text-align: center; font-weight: bold; font-size: 14px; color: #0F1D36;">{row['score']:.1f}</td>
+                    <td style="padding: 12px; text-align: center;">
+                        <span style="background-color: {row['color']}; color: {row['text_color']}; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; display: inline-block; min-width: 80px; text-align: center;">{row['action']}</span>
+                    </td>
+                    <td style="padding: 12px; text-align: center;">
+                        <span style="border: 1px solid {src_color}; color: {src_color}; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold;">{row['source']}</span>
+                    </td>
+                </tr>
+            """
+            
+        html_table += "</tbody></table>"
+        st.markdown(html_table, unsafe_allow_html=True)
+    else:
+        st.info("Brak załadowanych rekomendacji. Kliknij przycisk powyżej, aby wygenerować rekomendacje sesyjne o 8:00.")
 
 with tab2:
     st.header("🎯 Realizacja Strategii Portfela")
-    st.info("Moduł w przygotowaniu (Iteracja 3). Będzie nadzorować alokację i reguły ryzyka.")
-    
-    st.subheader("Planowane Funkcje Strategiczne:")
-    st.markdown("""
-    - **Limity Alokacji:** Maksymalnie 15% na jedną spółkę, 30% na sektor.
-    - **Zarządzanie Ryzykiem:** Automatyczna kontrola progów Stop-Loss (-10%) i trailing Take-Profit (+25%).
-    - **Rebalansowanie:** Sugestie zmian w portfelu na bazie oceny ryzyka generowanej przez Agenta QA & Risk Auditor.
-    """)
+    st.markdown("Nadzór nad limitami alokacji kapitału oraz kontrola ryzyka (Stop-Loss / Take-Profit).")
+
+    if os.path.exists(HOLDINGS_PATH):
+        df_holdings = pd.read_csv(HOLDINGS_PATH)
+    else:
+        df_holdings = pd.DataFrame()
+
+    if df_holdings.empty:
+        st.info("Najpierw wgraj raport wyciągu PDF z Erste BM w zakładce 'Wyniki i Portfel', aby załadować pozycje.")
+    else:
+        SECTORS_MAPPING = {
+            "KRUK": "Finanse i Windykacja",
+            "LPP": "Odzież i Handel",
+            "GRODNO": "Elektrotechnika i OZE",
+            "RYVU": "Biotechnologia i Medycyna",
+            "SYNEKTIK": "Biotechnologia i Medycyna",
+            "MODIVO": "Odzież i Handel",
+            "NEWAG": "Przemysł i Transport",
+            "GPW": "Finanse i Windykacja",
+            "SEKO": "Przemysł Spożywczy",
+            "DOMDEV": "Budownictwo i Deweloperzy",
+            "XTB": "Finanse i Windykacja",
+            "ETFBW20TR": "Fundusze ETF",
+            "SYN2BIO": "Biotechnologia i Medycyna",
+            "KOLEJKOWO": "Rozrywka i Turystyka",
+            "DEKPOL": "Budownictwo i Deweloperzy",
+            "ETFBSPXPL": "Fundusze ETF",
+            "PKOBP": "Finanse i Windykacja",
+            "LUBAWA": "Przemysł i Obrona",
+            "PKPCARGO": "Przemysł i Transport",
+            "ZREMB": "Przemysł i Maszyny",
+            "KLEPSYDRA": "Usługi",
+            "RANKPROGR": "Budownictwo i Deweloperzy",
+            "STAPORKOW": "Przemysł i Konstrukcje",
+            "GETIN": "Finanse i Windykacja"
+        }
+
+        # Initialize live prices from the holdings CSV (which represents purchase cost basis)
+        if "live_prices" not in st.session_state or not st.session_state["live_prices"]:
+            st.session_state["live_prices"] = {row["Spółka"]: row["Kurs (PLN)"] for _, row in df_holdings.iterrows()}
+
+        col_ref, col_lbl = st.columns([1, 2])
+        with col_ref:
+            if st.button("🔄 Odśwież Kursy Bieżące (Yahoo Finance)", use_container_width=True):
+                with st.spinner("Pobieranie aktualnych notowań..."):
+                    live_prices = {}
+                    for ticker in df_holdings["Spółka"].unique():
+                        symbol = YFIN_TICKERS.get(ticker, f"{ticker}.WA")
+                        try:
+                            yft = yf.Ticker(symbol)
+                            hist = yft.history(period="1d")
+                            if not hist.empty:
+                                live_prices[ticker] = float(hist["Close"].iloc[-1])
+                            else:
+                                live_prices[ticker] = float(df_holdings.loc[df_holdings["Spółka"] == ticker, "Kurs (PLN)"].values[0])
+                        except Exception:
+                            live_prices[ticker] = float(df_holdings.loc[df_holdings["Spółka"] == ticker, "Kurs (PLN)"].values[0])
+                    st.session_state["live_prices"] = live_prices
+                    st.success("Zaktualizowano kursy!")
+                    st.rerun()
+        with col_lbl:
+            st.markdown(f"""
+            * **Limit alokacji spółki:** `max 15.0%`
+            * **Limit alokacji sektora:** `max 30.0%`
+            * **Zabezpieczenie:** Stop-Loss (`-10.0%`) | Take-Profit Trailing (`+25.0%`)
+            """)
+
+        # Recalculate valuations based on live prices
+        df_strat = df_holdings.copy()
+        df_strat["Sektor"] = df_strat["Spółka"].map(lambda x: SECTORS_MAPPING.get(x, "Inne i Fundusze"))
+        df_strat["Kurs Bieżący (PLN)"] = df_strat["Spółka"].map(lambda x: st.session_state["live_prices"].get(x, df_strat.loc[df_strat["Spółka"] == x, "Kurs (PLN)"].values[0]))
+        df_strat["Wycena Bieżąca (PLN)"] = df_strat["Ilość"] * df_strat["Kurs Bieżący (PLN)"]
+        
+        total_live_stocks_val = df_strat["Wycena Bieżąca (PLN)"].sum()
+        if total_live_stocks_val == 0:
+            total_live_stocks_val = 1.0
+        df_strat["Udział Bieżący (%)"] = round((df_strat["Wycena Bieżąca (PLN)"] / total_live_stocks_val) * 100, 2)
+        
+        # Allocation warning checks
+        allocation_warnings = []
+        for _, r in df_strat.iterrows():
+            if r["Udział Bieżący (%)"] > 15.0:
+                excess_pln = r["Wycena Bieżąca (PLN)"] - (total_live_stocks_val * 0.15)
+                allocation_warnings.append(f"⚠️ **Przekroczenie limitu alokacji spółki ({r['Spółka']}):** Udział wynosi **{r['Udział Bieżący (%)']:.2f}%** (limit 15%). Nadwyżka: **{excess_pln:,.2f} zł**. Sugerowana redukcja.")
+
+        df_sect = df_strat.groupby("Sektor")["Wycena Bieżąca (PLN)"].sum().reset_index()
+        df_sect["Udział (%)"] = round((df_sect["Wycena Bieżąca (PLN)"] / total_live_stocks_val) * 100, 2)
+        
+        for _, r in df_sect.iterrows():
+            if r["Udział (%)"] > 30.0:
+                excess_pln = r["Wycena Bieżąca (PLN)"] - (total_live_stocks_val * 0.30)
+                allocation_warnings.append(f"🚨 **Krytyczne przekroczenie sektora ({r['Sektor']}):** Udział wynosi **{r['Udział (%)']:.2f}%** (limit 30%). Nadwyżka: **{excess_pln:,.2f} zł**. Sugerowane rebalansowanie.")
+
+        if allocation_warnings:
+            st.markdown("### ⚠️ Ostrzeżenia Alokacyjne (Quality Gate)")
+            for warn in allocation_warnings:
+                st.markdown(f"<div style='background-color:#FFF3CD; padding:10px 15px; border-radius:5px; border-left:5px solid #FFC107; margin-bottom:8px; font-size:13px; font-weight:500; color:#856404;'>{warn}</div>", unsafe_allow_html=True)
+            st.markdown("---")
+
+        # Visual charts (Stock allocation vs Sector allocation)
+        col_ch1, col_ch2 = st.columns(2)
+        with col_ch1:
+            # Stock allocation chart
+            fig_stock_alloc = px.bar(
+                df_strat.sort_values(by="Udział Bieżący (%)", ascending=True),
+                x="Udział Bieżący (%)",
+                y="Spółka",
+                orientation="h",
+                title="Udział Spółek w Portfelu Akcji (%)",
+                color="Udział Bieżący (%)",
+                color_continuous_scale="Blues"
+            )
+            # Add limit line
+            fig_stock_alloc.add_vline(x=15.0, line_dash="dash", line_color="red", annotation_text="Limit 15%")
+            fig_stock_alloc.update_layout(margin=dict(l=10, r=10, t=40, b=10), showlegend=False, coloraxis_showscale=False)
+            st.plotly_chart(fig_stock_alloc, use_container_width=True)
+
+        with col_ch2:
+            # Sector allocation chart
+            fig_sect_alloc = px.pie(
+                df_sect,
+                names="Sektor",
+                values="Wycena Bieżąca (PLN)",
+                hole=0.4,
+                title="Udział Sektorów w Portfelu Akcji (%)",
+                color_discrete_sequence=px.colors.qualitative.Dark2
+            )
+            fig_sect_alloc.update_layout(margin=dict(l=10, r=10, t=40, b=10))
+            st.plotly_chart(fig_sect_alloc, use_container_width=True)
+
+        # Risk Management (Stop-Loss & Take-Profit)
+        st.markdown("### 🛑 Monitor Ryzyka (Stop-Loss & Take-Profit)")
+        
+        # HTML Risk Table
+        risk_table = """
+        <table style="width:100%; border-collapse: collapse; margin-top: 10px; background-color: #FFFFFF; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+            <thead>
+                <tr style="background-color: #0F1D36; color: #FFFFFF; font-weight: bold; border-bottom: 3px solid #0066CC; text-align: left;">
+                    <th style="padding: 12px; font-size: 13px;">Spółka</th>
+                    <th style="padding: 12px; font-size: 13px;">Ilość</th>
+                    <th style="padding: 12px; font-size: 13px;">Cena Wejścia (Koszt)</th>
+                    <th style="padding: 12px; font-size: 13px;">Kurs Bieżący</th>
+                    <th style="padding: 12px; font-size: 13px;">Wynik (%)</th>
+                    <th style="padding: 12px; font-size: 13px; text-align: center;">Status Zlecenia / Alert</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+
+        for _, r in df_strat.iterrows():
+            purchase = r["Kurs (PLN)"]
+            current = r["Kurs Bieżący (PLN)"]
+            change_pct = ((current - purchase) / purchase) * 100 if purchase > 0 else 0.0
+            
+            # Formatting and styling
+            change_str = f"{change_pct:+.2f}%"
+            change_color = "#28A745" if change_pct >= 0 else "#DC3545"
+            
+            if change_pct <= -10.0:
+                status_badge = '<span style="background-color: #DC3545; color: #FFFFFF; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; display: inline-block; min-width: 140px; text-align: center;">🛑 STOP-LOSS TRIGGERED!</span>'
+            elif change_pct >= 25.0:
+                status_badge = '<span style="background-color: #28A745; color: #FFFFFF; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; display: inline-block; min-width: 140px; text-align: center;">🟢 TAKE-PROFIT ACTIVE!</span>'
+            else:
+                status_badge = '<span style="background-color: #17A2B8; color: #FFFFFF; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; display: inline-block; min-width: 140px; text-align: center;">⚪ OK (Zabezpieczone)</span>'
+
+            risk_table += f"""
+                <tr style="border-bottom: 1px solid #E2E2E2; font-size: 13px; font-weight: 500; color: #212529;">
+                    <td style="padding: 12px; font-weight: bold; color: #0F1D36;">{r['Spółka']}</td>
+                    <td style="padding: 12px;">{r['Ilość']:,}</td>
+                    <td style="padding: 12px;">{purchase:,.2f} zł</td>
+                    <td style="padding: 12px; font-weight: bold;">{current:,.2f} zł</td>
+                    <td style="padding: 12px; color: {change_color}; font-weight: bold; font-size: 14px;">{change_str}</td>
+                    <td style="padding: 12px; text-align: center;">{status_badge}</td>
+                </tr>
+            """
+            
+        risk_table += "</tbody></table>"
+        st.markdown(risk_table, unsafe_allow_html=True)
 
 # ==========================================
 # TAB 3: WYNIKI PORTFELA (CEL 3)
@@ -252,8 +544,8 @@ with tab3:
         total_delta_str = f"{organic_profit_pln:+.2f} zł ({total_change_pct:+.2f}%) zysku netto bez wpłat"
         total_delta_class = "delta-plus" if organic_profit_pln >= 0 else "delta-minus"
         
-        # Display KPIs using custom HTML for beautiful mobile-first design (4 columns)
-        col1, col2, col3, col4 = st.columns(4)
+        # Display KPIs using custom HTML for beautiful mobile-first design (5 columns)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.markdown(f"""
             <div class="metric-card">
@@ -283,10 +575,19 @@ with tab3:
             
         with col4:
             st.markdown(f"""
+            <div class="metric-card" style="border-left-color: #6F42C1;">
+                <div class="metric-title">Suma Wpłat (od Q1 2026)</div>
+                <div class="metric-value">{latest_deposits:,.2f} PLN</div>
+                <div class="metric-delta" style="color: #6C757D;">Kapitał zewnętrzny</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col5:
+            st.markdown(f"""
             <div class="metric-card" style="border-left-color: #FFC107;">
                 <div class="metric-title">Gotówka w Portfelu</div>
                 <div class="metric-value">{latest_cash:,.2f} PLN</div>
-                <div class="metric-delta" style="color: #6C757D;">Wpłaty z zewnątrz: {latest_deposits:,.2f} zł</div>
+                <div class="metric-delta" style="color: #6C757D;">Wolne środki</div>
             </div>
             """, unsafe_allow_html=True)
     else:
@@ -294,14 +595,14 @@ with tab3:
 
     st.markdown("---")
 
-    # 3. WYKRES EWOLUCJI PORTFELA W CZASIE (DWUWYMIAROWY: WARTOŚĆ vs ZYSK ORGANICZNY)
+    # 3. WYKRES EWOLUCJI PORTFELA W CZASIE (TRZYWYMIAROWY: WARTOŚĆ vs ZYSK vs WPŁATY)
     if not df_history.empty:
-        st.subheader("Ewolucja Portfela i Zysku Organicznego (Bez Wpłat)")
+        st.subheader("Ewolucja Portfela, Zysku i Sumy Wpłat")
         
         # Melt dataframe to make it suitable for Plotly Express multi-line
         df_plot = df_history.melt(
             id_vars=["Data"],
-            value_vars=["Wartość Całkowita (PLN)", "Zysk (PLN)"],
+            value_vars=["Wartość Całkowita (PLN)", "Zysk (PLN)", "Wpłaty Skumulowane (PLN)"],
             var_name="Wskaźnik",
             value_name="Wartość (PLN)"
         )
@@ -312,11 +613,12 @@ with tab3:
             x="Data", 
             y="Wartość (PLN)",
             color="Wskaźnik",
-            title="Ewolucja Wartości Portfela vs Zysk Organiczny (Od Q1 2026)",
+            title="Ewolucja Wartości Portfela vs Zysk Organiczny vs Suma Wpłat (Od Q1 2026)",
             markers=True,
             color_discrete_map={
                 "Wartość Całkowita (PLN)": "#0066CC",
-                "Zysk (PLN)": "#28A745"
+                "Zysk (PLN)": "#28A745",
+                "Wpłaty Skumulowane (PLN)": "#6F42C1"
             }
         )
         fig.update_layout(

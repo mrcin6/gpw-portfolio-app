@@ -1,0 +1,8 @@
+{
+  "max_allocation_per_stock_pct": 15.0,
+  "max_allocation_per_sector_pct": 30.0,
+  "stop_loss_pct": -10.0,
+  "take_profit_trailing_pct": 25.0,
+  "scoring_buy_threshold": 70,
+  "scoring_sell_threshold": 30
+}
