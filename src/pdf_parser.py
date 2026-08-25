@@ -14,13 +14,15 @@ def parse_erste_pdf(pdf_path):
 
     # Identify date of the report to see if we can use our pre-verified static fallback
     report_date = None
-    
-    # Check for Format B date
+    is_format_b = False
+
+    # Check for Format B date ("Instrumenty finansowe" report: "Stan na: YYYY-MM-DD")
     date_match_b = re.search(r"Stan na:\s*([\d]{4}-[\d]{2}-[\d]{2})", text_full)
     if date_match_b:
         report_date = date_match_b.group(1)
+        is_format_b = True
     else:
-        # Check for Format A date
+        # Check for Format A date ("Kwartalne zestawienie aktywów": "DD.MM.YYYY")
         date_match_a = re.search(r"wartościowych na\s+([\d]{2}\.[\d]{2}\.[\d]{4})", text_full)
         if date_match_a:
             parts = date_match_a.group(1).split(".")
