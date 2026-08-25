@@ -297,11 +297,20 @@ with tab1:
             ev_val = f"{row['ev_ebitda']:.2f}" if row['ev_ebitda'] is not None else "N/A"
             dy_val = f"{row['dy']:.2f}%" if row['dy'] is not None and row['dy'] > 0 else "0.00%"
             price_val = f"{row['price']:,.2f} zł" if row['price'] is not None else "N/A"
+            is_l3 = "L3" in row['source']
             trend_label = "&#x1F4C8; Wzrostowy" if row['trend_score'] == 100 else "&#x1F4C9; Spadkowy"
             trend_color = "#27ae60" if row['trend_score'] == 100 else "#e74c3c"
             src_color = "#7c3aed" if "Premium" in row['source'] else ("#2563eb" if "Yahoo" in row['source'] else "#6b7280")
-            score_bg = "#dcfce7" if row['score'] >= 70 else ("#fee2e2" if row['score'] <= 30 else "#fef9c3")
-            score_color = "#166534" if row['score'] >= 70 else ("#991b1b" if row['score'] <= 30 else "#854d0e")
+            if is_l3:
+                score_cell = '<span style="color:#9ca3af;font-size:12px;font-style:italic;">—</span>'
+                recom_cell = '<span style="border:1.5px solid #d1d5db;color:#9ca3af;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:600;">Brak danych</span>'
+                trend_label = '<span style="color:#9ca3af;font-size:12px;font-style:italic;">—</span>'
+                trend_color = "#9ca3af"
+            else:
+                score_bg = "#dcfce7" if row['score'] >= 70 else ("#fee2e2" if row['score'] <= 30 else "#fef9c3")
+                score_color = "#166534" if row['score'] >= 70 else ("#991b1b" if row['score'] <= 30 else "#854d0e")
+                score_cell = f'<span style="background:{score_bg};color:{score_color};padding:4px 10px;border-radius:6px;font-weight:700;font-size:13px;">{row["score"]:.1f}</span>'
+                recom_cell = f'<span style="background:{row["color"]};color:{row["text_color"]};padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">{row["action"]}</span>'
 
             rows_html += f"""
             <tr>
@@ -312,8 +321,8 @@ with tab1:
                 <td class="td-center">{ev_val}</td>
                 <td class="td-center td-green">{dy_val}</td>
                 <td style="padding:12px 16px;font-size:12px;font-weight:600;color:{trend_color};">{trend_label}</td>
-                <td class="td-center"><span style="background:{score_bg};color:{score_color};padding:4px 10px;border-radius:6px;font-weight:700;font-size:13px;">{row['score']:.1f}</span></td>
-                <td class="td-center"><span style="background:{row['color']};color:{row['text_color']};padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">{row['action']}</span></td>
+                <td class="td-center">{score_cell}</td>
+                <td class="td-center">{recom_cell}</td>
                 <td class="td-center"><span style="border:1.5px solid {src_color};color:{src_color};padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;">{row['source']}</span></td>
             </tr>"""
 
