@@ -9,47 +9,80 @@ logger = logging.getLogger("StockwatchScraper")
 
 # Mapping of tickers to Stockwatch.pl slug names
 STOCKWATCH_SLUGS = {
-    "KRUK": "kruk-sa",
-    "LPP": "lpp-sa",
-    "GRODNO": "grodno-sa",
-    "RYVU": "ryvu-therapeutics-sa",
-    "SYNEKTIK": "synektik-sa",
-    "MODIVO": "ccc-sa",  # Fallback to parent company CCC since Modivo is private
-    "NEWAG": "newag-sa",
-    "GPW": "gielda-papierow-wartosciowych-w-warszawie-sa",
-    "SEKO": "seko-sa",
-    "DOMDEV": "dom-development-sa",
-    "XTB": "xtb-sa"
+    "KRUK":      "kruk-sa",
+    "LPP":       "lpp-sa",
+    "GRODNO":    "grodno-sa",
+    "RYVU":      "ryvu-therapeutics-sa",
+    "SEKO":      "seko-sa",
+    "DOMDEV":    "dom-development-sa",
+    "XTB":       "xtb-sa",
+    "KOLEJKOWO": "kolejkowo-sa",
+    "RAINBOW":   "rainbow-tours-sa",
+    "PKNORLEN":  "orlen-sa",
+    "PKOBP":     "pko-bank-polski-sa",
+    "SYN2BIO":   "syn2bio-sa",
+    "LUBAWA":    "lubawa-sa",
+    "PKPCARGO":  "pkp-cargo-sa",
+    "RANKPROGR": "rank-progress-sa",
+    "STAPORKOW": "stal-stalowa-wola-sa",
+    "ZREMB":     "zremb-chojnice-sa",
+    # Legacy / no longer in portfolio but kept for backwards compat
+    "SYNEKTIK":  "synektik-sa",
+    "MODIVO":    "ccc-sa",
+    "NEWAG":     "newag-sa",
+    "GPW":       "gielda-papierow-wartosciowych-w-warszawie-sa",
 }
 
-# Mapping of tickers to Yahoo Finance symbols
+# Mapping of tickers to Yahoo Finance symbols (GPW: suffix .WA)
 YFIN_TICKERS = {
-    "KRUK": "KRU.WA",
-    "LPP": "LPP.WA",
-    "GRODNO": "GRN.WA",
-    "RYVU": "RYV.WA",
-    "SYNEKTIK": "SNT.WA",
-    "MODIVO": "CCC.WA",
-    "NEWAG": "NWG.WA",
-    "GPW": "GPW.WA",
-    "SEKO": "SEK.WA",
-    "DOMDEV": "DOM.WA",
-    "XTB": "XTB.WA"
+    "KRUK":      "KRU.WA",
+    "LPP":       "LPP.WA",
+    "GRODNO":    "GRN.WA",
+    "RYVU":      "RYV.WA",
+    "SEKO":      "SEK.WA",
+    "DOMDEV":    "DOM.WA",
+    "XTB":       "XTB.WA",
+    "KOLEJKOWO": "KLJ.WA",
+    "RAINBOW":   "RBW.WA",
+    "PKNORLEN":  "PKN.WA",
+    "PKOBP":     "PKO.WA",
+    "SYN2BIO":   "SNB.WA",
+    "LUBAWA":    "LBW.WA",
+    "PKPCARGO":  "PKC.WA",
+    "RANKPROGR": "RNK.WA",
+    "STAPORKOW": "STP.WA",
+    "ZREMB":     "ZRM.WA",
+    # Legacy
+    "SYNEKTIK":  "SNT.WA",
+    "MODIVO":    "CCC.WA",
+    "NEWAG":     "NWG.WA",
+    "GPW":       "GPW.WA",
 }
 
-# Static realistic fallback data (in case Stockwatch and Yahoo Finance fail/no internet)
+# Static realistic fallback data (prices/ratios as of 2026-07 for L3 fallback)
 STATIC_FALLBACKS = {
-    "KRUK": {"c_z": 9.45, "c_wk": 1.62, "ev_ebitda": 7.80, "dy": 5.20, "price": 435.70},
-    "LPP": {"c_z": 18.20, "c_wk": 4.10, "ev_ebitda": 11.50, "dy": 2.80, "price": 20800.00},
-    "GRODNO": {"c_z": 11.50, "c_wk": 0.85, "ev_ebitda": 6.20, "dy": 4.50, "price": 15.40},
-    "RYVU": {"c_z": -12.40, "c_wk": 2.10, "ev_ebitda": -8.50, "dy": 0.00, "price": 18.10},
-    "SYNEKTIK": {"c_z": 24.50, "c_wk": 5.80, "ev_ebitda": 15.20, "dy": 1.20, "price": 355.60},
-    "MODIVO": {"c_z": 15.10, "c_wk": 1.95, "ev_ebitda": 8.90, "dy": 0.00, "price": 90.56},
-    "NEWAG": {"c_z": 10.20, "c_wk": 1.35, "ev_ebitda": 6.80, "dy": 3.10, "price": 93.10},
-    "GPW": {"c_z": 12.80, "c_wk": 0.95, "ev_ebitda": 7.10, "dy": 6.20, "price": 99.50},
-    "SEKO": {"c_z": 7.40, "c_wk": 0.65, "ev_ebitda": 4.80, "dy": 5.50, "price": 12.65},
-    "DOMDEV": {"c_z": 8.90, "c_wk": 1.85, "ev_ebitda": 6.50, "dy": 7.80, "price": 251.00},
-    "XTB": {"c_z": 6.20, "c_wk": 2.15, "ev_ebitda": 4.10, "dy": 8.50, "price": 168.30}
+    "KRUK":      {"c_z": 9.45,  "c_wk": 1.62, "ev_ebitda": 7.80,  "dy": 5.20, "price": 414.00},
+    "LPP":       {"c_z": 18.20, "c_wk": 4.10, "ev_ebitda": 11.50, "dy": 2.80, "price": 19960.00},
+    "GRODNO":    {"c_z": 11.50, "c_wk": 0.85, "ev_ebitda": 6.20,  "dy": 4.50, "price": 16.00},
+    "RYVU":      {"c_z": -8.00, "c_wk": 1.80, "ev_ebitda": -6.00, "dy": 0.00, "price": 14.90},
+    "SEKO":      {"c_z": 7.40,  "c_wk": 0.65, "ev_ebitda": 4.80,  "dy": 5.50, "price": 11.60},
+    "DOMDEV":    {"c_z": 8.90,  "c_wk": 1.85, "ev_ebitda": 6.50,  "dy": 7.80, "price": 255.00},
+    "XTB":       {"c_z": 6.20,  "c_wk": 2.15, "ev_ebitda": 4.10,  "dy": 8.50, "price": 131.40},
+    "KOLEJKOWO": {"c_z": 22.00, "c_wk": 3.20, "ev_ebitda": 12.00, "dy": 0.00, "price": 58.00},
+    "RAINBOW":   {"c_z": 9.50,  "c_wk": 1.40, "ev_ebitda": 5.80,  "dy": 4.00, "price": 134.30},
+    "PKNORLEN":  {"c_z": 7.80,  "c_wk": 0.75, "ev_ebitda": 4.50,  "dy": 6.50, "price": 146.20},
+    "PKOBP":     {"c_z": 8.20,  "c_wk": 1.10, "ev_ebitda": 5.20,  "dy": 7.20, "price": 106.80},
+    "SYN2BIO":   {"c_z": -5.00, "c_wk": 4.50, "ev_ebitda": -3.00, "dy": 0.00, "price": 77.85},
+    "LUBAWA":    {"c_z": 14.00, "c_wk": 1.20, "ev_ebitda": 8.00,  "dy": 2.00, "price": 11.22},
+    "PKPCARGO":  {"c_z": -3.00, "c_wk": 0.30, "ev_ebitda": 6.00,  "dy": 0.00, "price": 10.32},
+    "RANKPROGR": {"c_z": 12.00, "c_wk": 0.60, "ev_ebitda": 7.00,  "dy": 0.00, "price": 4.90},
+    "STAPORKOW": {"c_z": 8.00,  "c_wk": 0.50, "ev_ebitda": 5.00,  "dy": 0.00, "price": 4.50},
+    "ZREMB":     {"c_z": 10.00, "c_wk": 0.80, "ev_ebitda": 6.00,  "dy": 0.00, "price": 9.26},
+    # Legacy
+    "SYNEKTIK":  {"c_z": 24.50, "c_wk": 5.80, "ev_ebitda": 15.20, "dy": 1.20, "price": 355.60},
+    "MODIVO":    {"c_z": 15.10, "c_wk": 1.95, "ev_ebitda": 8.90,  "dy": 0.00, "price": 90.56},
+    "NEWAG":     {"c_z": 10.20, "c_wk": 1.35, "ev_ebitda": 6.80,  "dy": 3.10, "price": 93.10},
+    "GPW":       {"c_z": 12.80, "c_wk": 0.95, "ev_ebitda": 7.10,  "dy": 6.20, "price": 99.50},
 }
 
 
