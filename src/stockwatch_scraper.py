@@ -219,7 +219,7 @@ class StockwatchScraper:
         slug = STOCKWATCH_SLUGS.get(ticker)
         
         # Level 1: Stockwatch Premium Scraping (if PHPSESSID provided)
-        if self.phpsessid and slug:
+        if self.session_cookie and slug:
             data = self.fetch_stockwatch_html_indicators(slug)
             if data and all(data.get(k) is not None for k in ["c_z", "c_wk", "ev_ebitda"]):
                 # Fetch price from Yahoo to complete data
