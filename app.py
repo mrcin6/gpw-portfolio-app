@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import os
@@ -40,40 +41,118 @@ else:
 if "phpsessid" not in settings:
     settings["phpsessid"] = ""
 
-# Custom styling for rich aesthetics and clean mobile looks
+# UXR / CXR Design System — Poppins + Navy + Neon
 st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+    /* ── Global font ── */
+    html, body, [class*="css"], .stMarkdown, .stText, button, input, label, select, textarea {
+        font-family: 'Poppins', sans-serif !important;
+    }
+
+    /* ── App background ── */
+    .stApp { background-color: #f6f6f6; }
+    .main .block-container { background-color: #f6f6f6; padding-top: 1.5rem; }
+
+    /* ── Page title ── */
+    h1 { font-family: 'Poppins', sans-serif !important; font-weight: 700 !important;
+         color: #131f33 !important; letter-spacing: -0.5px; }
+    h2, h3 { font-family: 'Poppins', sans-serif !important; font-weight: 600 !important;
+              color: #1f2b40 !important; }
+
+    /* ── Sidebar — dark navy ── */
+    [data-testid="stSidebar"] { background-color: #111926 !important; }
+    [data-testid="stSidebar"] * { color: rgba(255,255,255,0.85) !important;
+                                   font-family: 'Poppins', sans-serif !important; }
+    [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        color: #ecfa64 !important; font-size: 14px !important; letter-spacing: 0.5px;
+    }
+    [data-testid="stSidebar"] label { color: rgba(255,255,255,0.6) !important; font-size: 12px !important; }
+    [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
+    [data-testid="stSidebar"] input {
+        background: #1f2b40 !important; color: #fff !important;
+        border: 1px solid rgba(255,255,255,0.15) !important; border-radius: 6px !important;
+    }
+
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #131f33; border-radius: 10px; padding: 5px; gap: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: rgba(255,255,255,0.55); font-family: 'Poppins', sans-serif !important;
+        font-size: 13px; font-weight: 500; border-radius: 7px; padding: 8px 20px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #ecfa64 !important; color: #131f33 !important;
+        font-weight: 700 !important;
+    }
+
+    /* ── Buttons ── */
+    .stButton > button {
+        background-color: #ecfa64 !important; color: #131f33 !important;
+        font-family: 'Poppins', sans-serif !important; font-weight: 600 !important;
+        border: none !important; border-radius: 8px !important;
+        padding: 0.5rem 1.2rem !important; font-size: 13px !important;
+    }
+    .stButton > button:hover { background-color: #cde200 !important; }
+    .stButton > button[kind="primary"] { background-color: #ecfa64 !important; }
+
+    /* ── Metric cards (Tab 3) ── */
     .metric-card {
-        background-color: #F8F9FA;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        border-left: 5px solid #0066CC;
+        background-color: #ffffff;
+        border-radius: 8px;
+        padding: 18px 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+        border-left: 4px solid #ecfa64;
         margin-bottom: 10px;
         min-height: 110px;
     }
     .metric-title {
-        font-size: 13px;
-        color: #6C757D;
-        font-weight: bold;
+        font-family: 'Poppins', sans-serif;
+        font-size: 11px;
+        color: #808080;
+        font-weight: 500;
         text-transform: uppercase;
-        margin-bottom: 5px;
+        letter-spacing: 0.8px;
+        margin-bottom: 8px;
     }
     .metric-value {
+        font-family: 'Poppins', sans-serif;
         font-size: 22px;
-        color: #212529;
-        font-weight: bold;
+        color: #1a1a1a;
+        font-weight: 700;
     }
-    .metric-delta {
-        font-size: 13px;
-        font-weight: bold;
+    .metric-delta { font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 500; }
+    .delta-plus  { color: #28A745; }
+    .delta-minus { color: #DC3545; }
+
+    /* ── Subheader accent (UXR "subheader" component) ── */
+    .uxr-subheader {
+        display: flex; align-items: center; gap: 12px; margin: 12px 0 4px 0;
     }
-    .delta-plus {
-        color: #28A745;
+    .uxr-subheader-bar {
+        width: 5px; min-height: 28px; background: #ecfa64;
+        border-radius: 9999px; flex-shrink: 0;
     }
-    .delta-minus {
-        color: #DC3545;
+    .uxr-subheader-text {
+        font-family: 'Poppins', sans-serif; font-size: 16px;
+        font-weight: 600; color: #1f2b40; letter-spacing: 0.3px;
     }
+
+    /* ── Note / warning cards ── */
+    .note-card {
+        display: flex; border-radius: 6px; overflow: hidden;
+        border: 1.5px solid #e0e0e0; margin-bottom: 8px; background: #fff;
+    }
+    .note-bar { width: 6px; flex-shrink: 0; }
+    .note-bar-warn  { background: #FF9F43; }
+    .note-bar-crit  { background: #FF5C5C; }
+    .note-bar-info  { background: #5B8DEF; }
+    .note-body { padding: 12px 16px; font-family: 'Poppins', sans-serif;
+                 font-size: 13px; color: #333; line-height: 1.6; }
+
+    /* ── st.info / st.warning overrides ── */
+    [data-testid="stAlert"] { border-radius: 8px !important; font-family: 'Poppins', sans-serif !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -191,59 +270,69 @@ with tab1:
 
     if st.session_state["recommendations_data"] is not None:
         recom_list = st.session_state["recommendations_data"]
-        
-        # HTML Table for rich aesthetics
-        html_table = """
-        <table style="width:100%; border-collapse: collapse; margin-top: 10px; background-color: #FFFFFF; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-            <thead>
-                <tr style="background-color: #0F1D36; color: #FFFFFF; font-weight: bold; border-bottom: 3px solid #0066CC; text-align: left;">
-                    <th style="padding: 12px; font-size: 13px;">Spółka</th>
-                    <th style="padding: 12px; font-size: 13px;">Kurs Bieżący</th>
-                    <th style="padding: 12px; font-size: 13px; text-align: center;">C/Z</th>
-                    <th style="padding: 12px; font-size: 13px; text-align: center;">C/WK</th>
-                    <th style="padding: 12px; font-size: 13px; text-align: center;">EV/EBITDA</th>
-                    <th style="padding: 12px; font-size: 13px; text-align: center;">Dywidenda</th>
-                    <th style="padding: 12px; font-size: 13px;">Trend SMA50</th>
-                    <th style="padding: 12px; font-size: 13px; text-align: center;">Score</th>
-                    <th style="padding: 12px; font-size: 13px; text-align: center;">Rekomendacja</th>
-                    <th style="padding: 12px; font-size: 12px; text-align: center;">Źródło</th>
-                </tr>
-            </thead>
-            <tbody>
-        """
-        
+
+        rows_html = ""
         for row in recom_list:
-            cz_val = f"{row['c_z']:.2f}" if row['c_z'] is not None and row['c_z'] != 0 else ("Strata" if row['c_z'] is not None and row['c_z'] < 0 else "N/A")
+            if row['c_z'] is None:
+                cz_val = "N/A"
+            elif row['c_z'] < 0:
+                cz_val = "Strata"
+            else:
+                cz_val = f"{row['c_z']:.2f}"
             cwk_val = f"{row['c_wk']:.2f}" if row['c_wk'] is not None else "N/A"
             ev_val = f"{row['ev_ebitda']:.2f}" if row['ev_ebitda'] is not None else "N/A"
             dy_val = f"{row['dy']:.2f}%" if row['dy'] is not None and row['dy'] > 0 else "0.00%"
             price_val = f"{row['price']:,.2f} zł" if row['price'] is not None else "N/A"
-            trend_label = "📈 Wzrostowy" if row['trend_score'] == 100 else "📉 Spadkowy/Konsol."
-            trend_color = "#28A745" if row['trend_score'] == 100 else "#DC3545"
-            
-            src_color = "#6F42C1" if "Premium" in row['source'] else ("#0066CC" if "Yahoo" in row['source'] else "#6C757D")
-            
-            html_table += f"""
-                <tr style="border-bottom: 1px solid #E2E2E2; font-size: 13px; font-weight: 500; color: #212529;">
-                    <td style="padding: 12px; font-weight: bold; color: #0F1D36;">{row['ticker']}</td>
-                    <td style="padding: 12px; font-weight: bold;">{price_val}</td>
-                    <td style="padding: 12px; text-align: center;">{cz_val}</td>
-                    <td style="padding: 12px; text-align: center;">{cwk_val}</td>
-                    <td style="padding: 12px; text-align: center;">{ev_val}</td>
-                    <td style="padding: 12px; text-align: center; color: #28A745; font-weight: bold;">{dy_val}</td>
-                    <td style="padding: 12px; color: {trend_color}; font-weight: bold;">{trend_label}</td>
-                    <td style="padding: 12px; text-align: center; font-weight: bold; font-size: 14px; color: #0F1D36;">{row['score']:.1f}</td>
-                    <td style="padding: 12px; text-align: center;">
-                        <span style="background-color: {row['color']}; color: {row['text_color']}; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; display: inline-block; min-width: 80px; text-align: center;">{row['action']}</span>
-                    </td>
-                    <td style="padding: 12px; text-align: center;">
-                        <span style="border: 1px solid {src_color}; color: {src_color}; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold;">{row['source']}</span>
-                    </td>
-                </tr>
-            """
-            
-        html_table += "</tbody></table>"
-        st.markdown(html_table, unsafe_allow_html=True)
+            trend_label = "&#x1F4C8; Wzrostowy" if row['trend_score'] == 100 else "&#x1F4C9; Spadkowy"
+            trend_color = "#27ae60" if row['trend_score'] == 100 else "#e74c3c"
+            src_color = "#7c3aed" if "Premium" in row['source'] else ("#2563eb" if "Yahoo" in row['source'] else "#6b7280")
+            score_bg = "#dcfce7" if row['score'] >= 70 else ("#fee2e2" if row['score'] <= 30 else "#fef9c3")
+            score_color = "#166534" if row['score'] >= 70 else ("#991b1b" if row['score'] <= 30 else "#854d0e")
+
+            rows_html += f"""
+            <tr>
+                <td class="td-company">{row['ticker']}</td>
+                <td class="td-num">{price_val}</td>
+                <td class="td-center">{cz_val}</td>
+                <td class="td-center">{cwk_val}</td>
+                <td class="td-center">{ev_val}</td>
+                <td class="td-center td-green">{dy_val}</td>
+                <td style="padding:12px 16px;font-size:12px;font-weight:600;color:{trend_color};">{trend_label}</td>
+                <td class="td-center"><span style="background:{score_bg};color:{score_color};padding:4px 10px;border-radius:6px;font-weight:700;font-size:13px;">{row['score']:.1f}</span></td>
+                <td class="td-center"><span style="background:{row['color']};color:{row['text_color']};padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">{row['action']}</span></td>
+                <td class="td-center"><span style="border:1.5px solid {src_color};color:{src_color};padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;">{row['source']}</span></td>
+            </tr>"""
+
+        table_html = f"""<!DOCTYPE html><html><head>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <style>
+            *{{margin:0;padding:0;box-sizing:border-box;font-family:'Poppins',sans-serif;}}
+            body{{background:#f6f6f6;padding:4px;}}
+            table{{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);}}
+            thead tr{{background:#131f33;border-bottom:3px solid #ecfa64;}}
+            th{{padding:12px 16px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.7);text-align:left;text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap;}}
+            th.th-center{{text-align:center;}}
+            tbody tr{{border-bottom:1px solid #f0f0f0;transition:background .15s;}}
+            tbody tr:hover{{background:#f8f8f8;}}
+            td{{padding:12px 16px;font-size:13px;color:#333;}}
+            .td-company{{font-weight:700;color:#131f33;font-size:13px;}}
+            .td-num{{font-weight:600;color:#1a1a1a;}}
+            .td-center{{text-align:center;}}
+            .td-green{{color:#16a34a;font-weight:600;}}
+        </style></head><body>
+        <table>
+            <thead><tr>
+                <th>Spółka</th><th>Kurs</th>
+                <th class="th-center">C/Z</th><th class="th-center">C/WK</th>
+                <th class="th-center">EV/EBITDA</th><th class="th-center">Dywidenda</th>
+                <th>Trend SMA50</th><th class="th-center">Score</th>
+                <th class="th-center">Rekomendacja</th><th class="th-center">Źródło</th>
+            </tr></thead>
+            <tbody>{rows_html}</tbody>
+        </table></body></html>"""
+
+        table_height = len(recom_list) * 52 + 80
+        components.html(table_html, height=table_height, scrolling=False)
     else:
         st.info("Brak załadowanych rekomendacji. Kliknij przycisk powyżej, aby wygenerować rekomendacje sesyjne o 8:00.")
 
@@ -343,90 +432,107 @@ with tab2:
                 allocation_warnings.append(f"🚨 **Krytyczne przekroczenie sektora ({r['Sektor']}):** Udział wynosi **{r['Udział (%)']:.2f}%** (limit 30%). Nadwyżka: **{excess_pln:,.2f} zł**. Sugerowane rebalansowanie.")
 
         if allocation_warnings:
-            st.markdown("### ⚠️ Ostrzeżenia Alokacyjne (Quality Gate)")
+            st.markdown('<div class="uxr-subheader"><div class="uxr-subheader-bar"></div><div class="uxr-subheader-text">⚠️ Ostrzeżenia Alokacyjne (Quality Gate)</div></div>', unsafe_allow_html=True)
             for warn in allocation_warnings:
-                st.markdown(f"<div style='background-color:#FFF3CD; padding:10px 15px; border-radius:5px; border-left:5px solid #FFC107; margin-bottom:8px; font-size:13px; font-weight:500; color:#856404;'>{warn}</div>", unsafe_allow_html=True)
+                bar_cls = "note-bar-crit" if "Krytyczne" in warn else "note-bar-warn"
+                st.markdown(f'<div class="note-card"><div class="note-bar {bar_cls}"></div><div class="note-body">{warn}</div></div>', unsafe_allow_html=True)
             st.markdown("---")
 
         # Visual charts (Stock allocation vs Sector allocation)
         col_ch1, col_ch2 = st.columns(2)
+        UXR_COLORS = ["#131f33", "#1f2b40", "#ecfa64", "#cde200", "#5B8DEF", "#FF9F43", "#FF5C5C", "#34d399", "#a78bfa", "#f87171"]
+
         with col_ch1:
-            # Stock allocation chart
             fig_stock_alloc = px.bar(
                 df_strat.sort_values(by="Udział Bieżący (%)", ascending=True),
-                x="Udział Bieżący (%)",
-                y="Spółka",
-                orientation="h",
-                title="Udział Spółek w Portfelu Akcji (%)",
+                x="Udział Bieżący (%)", y="Spółka", orientation="h",
+                title="Udział Spółek w Portfelu (%)",
                 color="Udział Bieżący (%)",
-                color_continuous_scale="Blues"
+                color_continuous_scale=[[0, "#1f2b40"], [0.5, "#5B8DEF"], [1, "#ecfa64"]]
             )
-            # Add limit line
-            fig_stock_alloc.add_vline(x=15.0, line_dash="dash", line_color="red", annotation_text="Limit 15%")
-            fig_stock_alloc.update_layout(margin=dict(l=10, r=10, t=40, b=10), showlegend=False, coloraxis_showscale=False)
+            fig_stock_alloc.add_vline(x=15.0, line_dash="dash", line_color="#FF5C5C",
+                                       annotation_text="Limit 15%", annotation_font_color="#FF5C5C")
+            fig_stock_alloc.update_layout(
+                margin=dict(l=10, r=10, t=40, b=10), showlegend=False, coloraxis_showscale=False,
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Poppins, sans-serif", color="#1a1a1a"),
+                title_font=dict(family="Poppins, sans-serif", size=14, color="#131f33"),
+                yaxis=dict(gridcolor="#f0f0f0"), xaxis=dict(gridcolor="#f0f0f0")
+            )
             st.plotly_chart(fig_stock_alloc, use_container_width=True)
 
         with col_ch2:
-            # Sector allocation chart
             fig_sect_alloc = px.pie(
-                df_sect,
-                names="Sektor",
-                values="Wycena Bieżąca (PLN)",
-                hole=0.4,
-                title="Udział Sektorów w Portfelu Akcji (%)",
-                color_discrete_sequence=px.colors.qualitative.Dark2
+                df_sect, names="Sektor", values="Wycena Bieżąca (PLN)",
+                hole=0.45, title="Alokacja Sektorowa (%)",
+                color_discrete_sequence=UXR_COLORS
             )
-            fig_sect_alloc.update_layout(margin=dict(l=10, r=10, t=40, b=10))
+            fig_sect_alloc.update_layout(
+                margin=dict(l=10, r=10, t=40, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Poppins, sans-serif", color="#1a1a1a"),
+                title_font=dict(family="Poppins, sans-serif", size=14, color="#131f33")
+            )
             st.plotly_chart(fig_sect_alloc, use_container_width=True)
 
         # Risk Management (Stop-Loss & Take-Profit)
-        st.markdown("### 🛑 Monitor Ryzyka (Stop-Loss & Take-Profit)")
-        
-        # HTML Risk Table
-        risk_table = """
-        <table style="width:100%; border-collapse: collapse; margin-top: 10px; background-color: #FFFFFF; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-            <thead>
-                <tr style="background-color: #0F1D36; color: #FFFFFF; font-weight: bold; border-bottom: 3px solid #0066CC; text-align: left;">
-                    <th style="padding: 12px; font-size: 13px;">Spółka</th>
-                    <th style="padding: 12px; font-size: 13px;">Ilość</th>
-                    <th style="padding: 12px; font-size: 13px;">Cena Wejścia (Koszt)</th>
-                    <th style="padding: 12px; font-size: 13px;">Kurs Bieżący</th>
-                    <th style="padding: 12px; font-size: 13px;">Wynik (%)</th>
-                    <th style="padding: 12px; font-size: 13px; text-align: center;">Status Zlecenia / Alert</th>
-                </tr>
-            </thead>
-            <tbody>
-        """
+        st.markdown('<div class="uxr-subheader"><div class="uxr-subheader-bar"></div><div class="uxr-subheader-text">&#128721; Monitor Ryzyka (Stop-Loss &amp; Take-Profit)</div></div>', unsafe_allow_html=True)
 
+        risk_rows_html = ""
         for _, r in df_strat.iterrows():
             purchase = r["Kurs (PLN)"]
             current = r["Kurs Bieżący (PLN)"]
             change_pct = ((current - purchase) / purchase) * 100 if purchase > 0 else 0.0
-            
-            # Formatting and styling
             change_str = f"{change_pct:+.2f}%"
-            change_color = "#28A745" if change_pct >= 0 else "#DC3545"
-            
-            if change_pct <= -10.0:
-                status_badge = '<span style="background-color: #DC3545; color: #FFFFFF; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; display: inline-block; min-width: 140px; text-align: center;">🛑 STOP-LOSS TRIGGERED!</span>'
-            elif change_pct >= 25.0:
-                status_badge = '<span style="background-color: #28A745; color: #FFFFFF; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; display: inline-block; min-width: 140px; text-align: center;">🟢 TAKE-PROFIT ACTIVE!</span>'
-            else:
-                status_badge = '<span style="background-color: #17A2B8; color: #FFFFFF; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; display: inline-block; min-width: 140px; text-align: center;">⚪ OK (Zabezpieczone)</span>'
+            change_color = "#16a34a" if change_pct >= 0 else "#dc2626"
 
-            risk_table += f"""
-                <tr style="border-bottom: 1px solid #E2E2E2; font-size: 13px; font-weight: 500; color: #212529;">
-                    <td style="padding: 12px; font-weight: bold; color: #0F1D36;">{r['Spółka']}</td>
-                    <td style="padding: 12px;">{r['Ilość']:,}</td>
-                    <td style="padding: 12px;">{purchase:,.2f} zł</td>
-                    <td style="padding: 12px; font-weight: bold;">{current:,.2f} zł</td>
-                    <td style="padding: 12px; color: {change_color}; font-weight: bold; font-size: 14px;">{change_str}</td>
-                    <td style="padding: 12px; text-align: center;">{status_badge}</td>
-                </tr>
-            """
-            
-        risk_table += "</tbody></table>"
-        st.markdown(risk_table, unsafe_allow_html=True)
+            if change_pct <= -10.0:
+                badge = '<span style="background:#dc2626;color:#fff;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128721; STOP-LOSS!</span>'
+                row_bg = "#fff5f5"
+            elif change_pct >= 25.0:
+                badge = '<span style="background:#16a34a;color:#fff;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9989; TAKE-PROFIT!</span>'
+                row_bg = "#f0fdf4"
+            else:
+                badge = '<span style="background:#131f33;color:#ecfa64;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9711; OK</span>'
+                row_bg = "#ffffff"
+
+            risk_rows_html += f"""
+            <tr style="background:{row_bg};">
+                <td class="td-company">{r['Spółka']}</td>
+                <td class="td-num">{int(r['Ilość']):,}</td>
+                <td class="td-num">{purchase:,.2f} zł</td>
+                <td class="td-num td-bold">{current:,.2f} zł</td>
+                <td style="padding:12px 16px;font-size:14px;font-weight:700;color:{change_color};">{change_str}</td>
+                <td class="td-center">{badge}</td>
+            </tr>"""
+
+        risk_html = f"""<!DOCTYPE html><html><head>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <style>
+            *{{margin:0;padding:0;box-sizing:border-box;font-family:'Poppins',sans-serif;}}
+            body{{background:#f6f6f6;padding:4px;}}
+            table{{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);}}
+            thead tr{{background:#131f33;border-bottom:3px solid #ecfa64;}}
+            th{{padding:12px 16px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.7);text-align:left;text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap;}}
+            th.th-center{{text-align:center;}}
+            tbody tr{{border-bottom:1px solid #f0f0f0;}}
+            td{{padding:12px 16px;font-size:13px;color:#333;}}
+            .td-company{{font-weight:700;color:#131f33;}}
+            .td-num{{font-weight:500;}}
+            .td-bold{{font-weight:700;color:#1a1a1a;}}
+            .td-center{{text-align:center;}}
+        </style></head><body>
+        <table>
+            <thead><tr>
+                <th>Spółka</th><th>Ilość</th>
+                <th>Cena Wejścia</th><th>Kurs Bieżący</th>
+                <th>Wynik (%)</th><th class="th-center">Status / Alert</th>
+            </tr></thead>
+            <tbody>{risk_rows_html}</tbody>
+        </table></body></html>"""
+
+        risk_height = len(df_strat) * 52 + 80
+        components.html(risk_html, height=risk_height, scrolling=False)
 
 # ==========================================
 # TAB 3: WYNIKI PORTFELA (CEL 3)
@@ -557,37 +663,37 @@ with tab3:
             
         with col2:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #28A745;">
+            <div class="metric-card" style="border-left-color: #27ae60;">
                 <div class="metric-title">Wynik Ostatniego Dnia</div>
                 <div class="metric-value">{daily_change_pln:+.2f} PLN</div>
                 <div class="metric-delta {daily_delta_class}">{daily_delta_str}</div>
             </div>
             """, unsafe_allow_html=True)
-            
+
         with col3:
             st.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" style="border-left-color: #cde200;">
                 <div class="metric-title">Skumulowany Zysk Netto</div>
                 <div class="metric-value">{total_change_pct:+.2f}%</div>
                 <div class="metric-delta {total_delta_class}">{total_delta_str}</div>
             </div>
             """, unsafe_allow_html=True)
-            
+
         with col4:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #6F42C1;">
+            <div class="metric-card" style="border-left-color: #5B8DEF;">
                 <div class="metric-title">Suma Wpłat (od Q1 2026)</div>
                 <div class="metric-value">{latest_deposits:,.2f} PLN</div>
-                <div class="metric-delta" style="color: #6C757D;">Kapitał zewnętrzny</div>
+                <div class="metric-delta" style="color:#808080;">Kapitał zewnętrzny</div>
             </div>
             """, unsafe_allow_html=True)
 
         with col5:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #FFC107;">
+            <div class="metric-card" style="border-left-color: #FF9F43;">
                 <div class="metric-title">Gotówka w Portfelu</div>
                 <div class="metric-value">{latest_cash:,.2f} PLN</div>
-                <div class="metric-delta" style="color: #6C757D;">Wolne środki</div>
+                <div class="metric-delta" style="color:#808080;">Wolne środki</div>
             </div>
             """, unsafe_allow_html=True)
     else:
@@ -607,30 +713,26 @@ with tab3:
             value_name="Wartość (PLN)"
         )
         
-        # Plotly multi-line chart
         fig = px.line(
-            df_plot, 
-            x="Data", 
-            y="Wartość (PLN)",
-            color="Wskaźnik",
-            title="Ewolucja Wartości Portfela vs Zysk Organiczny vs Suma Wpłat (Od Q1 2026)",
+            df_plot, x="Data", y="Wartość (PLN)", color="Wskaźnik",
+            title="Ewolucja Wartości Portfela vs Zysk Organiczny vs Suma Wpłat",
             markers=True,
             color_discrete_map={
-                "Wartość Całkowita (PLN)": "#0066CC",
-                "Zysk (PLN)": "#28A745",
-                "Wpłaty Skumulowane (PLN)": "#6F42C1"
+                "Wartość Całkowita (PLN)": "#131f33",
+                "Zysk (PLN)": "#ecfa64",
+                "Wpłaty Skumulowane (PLN)": "#5B8DEF"
             }
         )
         fig.update_layout(
-            hovermode="x unified", 
-            margin=dict(l=10, r=10, t=40, b=10),
-            xaxis_title="Data",
-            yaxis_title="Wartość (PLN)",
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            yaxis=dict(gridcolor='#E2E2E2'),
-            xaxis=dict(gridcolor='#E2E2E2')
+            hovermode="x unified",
+            margin=dict(l=10, r=10, t=50, b=10),
+            xaxis_title="Data", yaxis_title="Wartość (PLN)",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Poppins, sans-serif", color="#1a1a1a"),
+            title_font=dict(family="Poppins, sans-serif", size=15, color="#131f33"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        font=dict(family="Poppins, sans-serif")),
+            yaxis=dict(gridcolor="#f0f0f0"), xaxis=dict(gridcolor="#f0f0f0")
         )
         st.plotly_chart(fig, use_container_width=True)
         
@@ -651,14 +753,17 @@ with tab3:
             df_pie.loc[df_pie['Udział (%)'] < 2.5, 'Spółka'] = 'Inne'
             
             fig_pie = px.pie(
-                df_pie, 
-                names="Spółka", 
-                values="Wycena (PLN)", 
-                hole=0.4,
+                df_pie, names="Spółka", values="Wycena (PLN)", hole=0.45,
                 title="Struktura Portfela",
-                color_discrete_sequence=px.colors.qualitative.Pastel
+                color_discrete_sequence=["#131f33","#1f2b40","#ecfa64","#cde200",
+                                         "#5B8DEF","#FF9F43","#FF5C5C","#34d399","#a78bfa","#f87171"]
             )
-            fig_pie.update_layout(margin=dict(l=10, r=10, t=40, b=10))
+            fig_pie.update_layout(
+                margin=dict(l=10, r=10, t=40, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Poppins, sans-serif"),
+                title_font=dict(family="Poppins, sans-serif", size=14, color="#131f33")
+            )
             st.plotly_chart(fig_pie, use_container_width=True)
             
         with col_table:
