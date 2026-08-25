@@ -13,7 +13,7 @@ from src.stockwatch_scraper import StockwatchScraper, YFIN_TICKERS
 st.set_page_config(
     page_title="GPW Erste Portfolio",
     page_icon="📈",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed"
 )
 
@@ -54,8 +54,12 @@ st.markdown("""
     .stApp { background-color: #f6f6f6; }
     .main .block-container {
         background-color: #f6f6f6;
-        padding: 1rem 1rem 2rem 1rem !important;
-        max-width: 900px !important;
+        padding: 1rem 1.5rem 2rem 1.5rem !important;
+        /* fluid: grows with the screen, never wider than 1400px */
+        max-width: 1400px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+        width: 100% !important;
     }
 
     /* ── Page title ── */
@@ -166,29 +170,76 @@ st.markdown("""
     .note-body { padding: 10px 14px; font-family: 'Poppins', sans-serif;
                  font-size: 13px; color: #333; line-height: 1.6; }
 
-    /* ── Stack all Streamlit columns on narrow screens ── */
-    @media (max-width: 640px) {
-        .main .block-container { padding: 0.5rem 0.5rem 1.5rem 0.5rem !important; }
+    /* ════════════════════════════════════════
+       BREAKPOINTS  (mobile-first, grows up)
+       ════════════════════════════════════════
+
+       xs  < 480px   — telefon pionowy
+       sm  480–767px — telefon poziomy / małe tablety
+       md  768–1023px — tablet
+       lg  1024–1399px — laptop / desktop
+       xl  ≥ 1400px   — wide monitor
+    */
+
+    /* xs — telefon pionowy */
+    @media (max-width: 479px) {
+        .main .block-container { padding: 0.4rem 0.4rem 1rem 0.4rem !important; }
+        h1 { font-size: 18px !important; }
+        h2 { font-size: 15px !important; }
+
+        [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 4px !important; }
+        [data-testid="column"] { min-width: 100% !important; flex: 1 1 100% !important; }
+
+        .stTabs [data-baseweb="tab"] { font-size: 10px !important; padding: 5px 8px !important; }
+
+        .metrics-grid { grid-template-columns: 1fr; gap: 8px; }
+        .metric-card.wide { grid-column: 1; }
+        .metric-value { font-size: 15px !important; }
+        .metric-title { font-size: 9px !important; }
+        .note-body { font-size: 11px !important; }
+    }
+
+    /* sm — telefon poziomy / małe tablety */
+    @media (min-width: 480px) and (max-width: 767px) {
+        .main .block-container { padding: 0.6rem 0.8rem 1.5rem 0.8rem !important; }
         h1 { font-size: 20px !important; }
-        h2 { font-size: 16px !important; }
 
         [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 6px !important; }
-        [data-testid="column"] {
-            min-width: 100% !important; width: 100% !important; flex: 1 1 100% !important;
-        }
+        [data-testid="column"] { min-width: 100% !important; flex: 1 1 100% !important; }
 
         .stTabs [data-baseweb="tab"] { font-size: 11px !important; padding: 6px 10px !important; }
 
-        .metrics-grid { grid-template-columns: 1fr; }
-        .metric-card.wide { grid-column: 1; }
+        .metrics-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+        .metric-card.wide { grid-column: 1 / -1; }
         .metric-value { font-size: 16px !important; }
     }
 
-    /* ── Wider screens: 5-col metrics ── */
-    @media (min-width: 900px) {
-        .metrics-grid { grid-template-columns: repeat(5, 1fr); }
+    /* md — tablet */
+    @media (min-width: 768px) and (max-width: 1023px) {
+        .main .block-container { padding: 0.8rem 1.2rem 2rem 1.2rem !important; }
+
+        .metrics-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+        .metric-card.wide { grid-column: 1 / -1; }
+        .metric-value { font-size: 17px !important; }
+    }
+
+    /* lg — laptop / desktop */
+    @media (min-width: 1024px) and (max-width: 1399px) {
+        .metrics-grid { grid-template-columns: repeat(5, 1fr); gap: 12px; }
         .metric-card.wide { grid-column: auto; }
-        .metric-value { font-size: 20px !important; }
+        .metric-value { font-size: 19px !important; }
+    }
+
+    /* xl — wide monitor */
+    @media (min-width: 1400px) {
+        .main .block-container { padding: 1.2rem 3rem 2rem 3rem !important; }
+        .metrics-grid { grid-template-columns: repeat(5, 1fr); gap: 14px; }
+        .metric-card.wide { grid-column: auto; }
+        .metric-card { padding: 18px 20px; min-height: 100px; }
+        .metric-value { font-size: 22px !important; }
+        .metric-title { font-size: 11px !important; }
+        h1 { font-size: 28px !important; }
+        .stTabs [data-baseweb="tab"] { font-size: 13px !important; padding: 8px 18px !important; }
     }
 
     /* ── st.info / st.warning overrides ── */
