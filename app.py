@@ -13,7 +13,7 @@ from src.stockwatch_scraper import StockwatchScraper, YFIN_TICKERS
 st.set_page_config(
     page_title="GPW Erste Portfolio",
     page_icon="📈",
-    layout="wide",
+    layout="centered",
     initial_sidebar_state="collapsed"
 )
 
@@ -41,7 +41,7 @@ else:
 if "phpsessid" not in settings:
     settings["phpsessid"] = ""
 
-# UXR / CXR Design System — Poppins + Navy + Neon
+# UXR / CXR Design System — Poppins + Navy + Neon — Mobile First
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -52,11 +52,15 @@ st.markdown("""
 
     /* ── App background ── */
     .stApp { background-color: #f6f6f6; }
-    .main .block-container { background-color: #f6f6f6; padding-top: 1.5rem; }
+    .main .block-container {
+        background-color: #f6f6f6;
+        padding: 1rem 1rem 2rem 1rem !important;
+        max-width: 900px !important;
+    }
 
     /* ── Page title ── */
     h1 { font-family: 'Poppins', sans-serif !important; font-weight: 700 !important;
-         color: #131f33 !important; letter-spacing: -0.5px; }
+         color: #131f33 !important; letter-spacing: -0.5px; font-size: 24px !important; }
     h2, h3 { font-family: 'Poppins', sans-serif !important; font-weight: 600 !important;
               color: #1f2b40 !important; }
 
@@ -74,13 +78,17 @@ st.markdown("""
         border: 1px solid rgba(255,255,255,0.15) !important; border-radius: 6px !important;
     }
 
-    /* ── Tabs ── */
+    /* ── Tabs — scrollable on mobile ── */
     .stTabs [data-baseweb="tab-list"] {
-        background-color: #131f33; border-radius: 10px; padding: 5px; gap: 4px;
+        background-color: #131f33; border-radius: 10px; padding: 5px; gap: 2px;
+        overflow-x: auto; -webkit-overflow-scrolling: touch;
+        scrollbar-width: none; flex-wrap: nowrap;
     }
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
     .stTabs [data-baseweb="tab"] {
         color: rgba(255,255,255,0.55); font-family: 'Poppins', sans-serif !important;
-        font-size: 13px; font-weight: 500; border-radius: 7px; padding: 8px 20px;
+        font-size: 12px; font-weight: 500; border-radius: 7px;
+        padding: 7px 14px; white-space: nowrap; flex-shrink: 0;
     }
     .stTabs [aria-selected="true"] {
         background-color: #ecfa64 !important; color: #131f33 !important;
@@ -92,51 +100,58 @@ st.markdown("""
         background-color: #ecfa64 !important; color: #131f33 !important;
         font-family: 'Poppins', sans-serif !important; font-weight: 600 !important;
         border: none !important; border-radius: 8px !important;
-        padding: 0.5rem 1.2rem !important; font-size: 13px !important;
+        padding: 0.5rem 1rem !important; font-size: 13px !important;
+        width: 100% !important;
     }
     .stButton > button:hover { background-color: #cde200 !important; }
-    .stButton > button[kind="primary"] { background-color: #ecfa64 !important; }
 
-    /* ── Metric cards (Tab 3) ── */
+    /* ── Metric cards grid (mobile-first: 1 col, grows up) ── */
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 12px;
+    }
     .metric-card {
         background-color: #ffffff;
         border-radius: 8px;
-        padding: 18px 20px;
+        padding: 14px 16px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.07);
         border-left: 4px solid #ecfa64;
-        margin-bottom: 10px;
-        min-height: 110px;
+        min-height: 90px;
     }
+    .metric-card.wide { grid-column: 1 / -1; }
     .metric-title {
         font-family: 'Poppins', sans-serif;
-        font-size: 11px;
+        font-size: 10px;
         color: #808080;
         font-weight: 500;
         text-transform: uppercase;
-        letter-spacing: 0.8px;
-        margin-bottom: 8px;
+        letter-spacing: 0.7px;
+        margin-bottom: 6px;
     }
     .metric-value {
         font-family: 'Poppins', sans-serif;
-        font-size: 22px;
+        font-size: 18px;
         color: #1a1a1a;
         font-weight: 700;
+        line-height: 1.2;
     }
-    .metric-delta { font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 500; }
+    .metric-delta { font-family: 'Poppins', sans-serif; font-size: 11px; font-weight: 500; margin-top: 4px; }
     .delta-plus  { color: #28A745; }
     .delta-minus { color: #DC3545; }
 
-    /* ── Subheader accent (UXR "subheader" component) ── */
+    /* ── Subheader accent ── */
     .uxr-subheader {
-        display: flex; align-items: center; gap: 12px; margin: 12px 0 4px 0;
+        display: flex; align-items: center; gap: 10px; margin: 14px 0 6px 0;
     }
     .uxr-subheader-bar {
-        width: 5px; min-height: 28px; background: #ecfa64;
+        width: 4px; min-height: 24px; background: #ecfa64;
         border-radius: 9999px; flex-shrink: 0;
     }
     .uxr-subheader-text {
-        font-family: 'Poppins', sans-serif; font-size: 16px;
-        font-weight: 600; color: #1f2b40; letter-spacing: 0.3px;
+        font-family: 'Poppins', sans-serif; font-size: 14px;
+        font-weight: 600; color: #1f2b40; letter-spacing: 0.2px;
     }
 
     /* ── Note / warning cards ── */
@@ -144,15 +159,43 @@ st.markdown("""
         display: flex; border-radius: 6px; overflow: hidden;
         border: 1.5px solid #e0e0e0; margin-bottom: 8px; background: #fff;
     }
-    .note-bar { width: 6px; flex-shrink: 0; }
+    .note-bar { width: 5px; flex-shrink: 0; }
     .note-bar-warn  { background: #FF9F43; }
     .note-bar-crit  { background: #FF5C5C; }
     .note-bar-info  { background: #5B8DEF; }
-    .note-body { padding: 12px 16px; font-family: 'Poppins', sans-serif;
+    .note-body { padding: 10px 14px; font-family: 'Poppins', sans-serif;
                  font-size: 13px; color: #333; line-height: 1.6; }
+
+    /* ── Stack all Streamlit columns on narrow screens ── */
+    @media (max-width: 640px) {
+        .main .block-container { padding: 0.5rem 0.5rem 1.5rem 0.5rem !important; }
+        h1 { font-size: 20px !important; }
+        h2 { font-size: 16px !important; }
+
+        [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 6px !important; }
+        [data-testid="column"] {
+            min-width: 100% !important; width: 100% !important; flex: 1 1 100% !important;
+        }
+
+        .stTabs [data-baseweb="tab"] { font-size: 11px !important; padding: 6px 10px !important; }
+
+        .metrics-grid { grid-template-columns: 1fr; }
+        .metric-card.wide { grid-column: 1; }
+        .metric-value { font-size: 16px !important; }
+    }
+
+    /* ── Wider screens: 5-col metrics ── */
+    @media (min-width: 900px) {
+        .metrics-grid { grid-template-columns: repeat(5, 1fr); }
+        .metric-card.wide { grid-column: auto; }
+        .metric-value { font-size: 20px !important; }
+    }
 
     /* ── st.info / st.warning overrides ── */
     [data-testid="stAlert"] { border-radius: 8px !important; font-family: 'Poppins', sans-serif !important; }
+
+    /* ── Scrollable table container (inside iframes) ── */
+    .tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -244,41 +287,43 @@ with tab1:
     if "recommendations_data" not in st.session_state:
         st.session_state["recommendations_data"] = None
 
-    col_btn, col_info = st.columns([1, 2])
-    with col_btn:
-        if st.button("🔄 Uruchom Analizę Rekomendacji", use_container_width=True, type="primary"):
-            with st.spinner("Pobieranie i analiza wskaźników z portalów Stockwatch i Yahoo..."):
-                scraper = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
-                recom_data = []
-                for ticker in watchlist:
-                    indicators = scraper.get_indicators(ticker)
-                    trend_score = scraper.get_technical_trend(ticker)
-                    score = scraper.calculate_score(indicators, trend_score)
-                    recom = scraper.get_recommendation(score)
-                    recom_data.append({
-                        "ticker": ticker,
-                        "c_z": indicators.get("c_z"),
-                        "c_wk": indicators.get("c_wk"),
-                        "ev_ebitda": indicators.get("ev_ebitda"),
-                        "dy": indicators.get("dy"),
-                        "price": indicators.get("price"),
-                        "trend_score": trend_score,
-                        "score": score,
-                        "action": recom["action"],
-                        "color": recom["color"],
-                        "text_color": recom["text_color"],
-                        "source": indicators.get("source", "Nieznane")
-                    })
-                st.session_state["recommendations_data"] = recom_data
-                st.success("Analiza wskaźnikowa zakończona pomyślnie!")
-                st.rerun()
+    source_status = "🔑 Stockwatch Premium (L1)" if settings.get("phpsessid") else "📊 Biznesradar.pl (L2)"
+    st.markdown(f"""
+    <div class="note-card">
+      <div class="note-bar note-bar-info"></div>
+      <div class="note-body" style="font-size:12px;">
+        <b>Spółki ({len(watchlist)}):</b> {' · '.join(watchlist)}<br>
+        <b>Źródło danych:</b> {source_status} &nbsp;|&nbsp; <b>Model:</b> C/Z 30% · C/WK 20% · EV/EBITDA 20% · DY 10% · Trend 20%
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    with col_info:
-        st.markdown(f"""
-        * **Watchlist:** `{', '.join(watchlist)}`
-        * **Ciasteczko PHPSESSID:** {"🔑 Podane (L1 Premium Aktywne)" if settings.get("phpsessid") else "⚠️ Brak (L2/L3 Fallback)"}
-        * **Wagi modelu:** C/Z (30%), C/WK (20%), EV/EBITDA (20%), Dywidenda (10%), Trend SMA50 (20%)
-        """)
+    if st.button("🔄 Uruchom Analizę", use_container_width=True, type="primary"):
+        with st.spinner("Pobieranie wskaźników..."):
+            scraper = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
+            recom_data = []
+            for ticker in watchlist:
+                indicators = scraper.get_indicators(ticker)
+                trend_score = scraper.get_technical_trend(ticker)
+                score = scraper.calculate_score(indicators, trend_score)
+                recom = scraper.get_recommendation(score)
+                recom_data.append({
+                    "ticker": ticker,
+                    "c_z": indicators.get("c_z"),
+                    "c_wk": indicators.get("c_wk"),
+                    "ev_ebitda": indicators.get("ev_ebitda"),
+                    "dy": indicators.get("dy"),
+                    "price": indicators.get("price"),
+                    "trend_score": trend_score,
+                    "score": score,
+                    "action": recom["action"],
+                    "color": recom["color"],
+                    "text_color": recom["text_color"],
+                    "source": indicators.get("source", "Nieznane")
+                })
+            st.session_state["recommendations_data"] = recom_data
+            st.success(f"Analiza zakończona — {len(recom_data)} spółek.")
+            st.rerun()
 
     st.markdown("---")
 
@@ -331,33 +376,35 @@ with tab1:
 
         table_html = f"""<!DOCTYPE html><html><head>
         <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
         <style>
             *{{margin:0;padding:0;box-sizing:border-box;font-family:'Poppins',sans-serif;}}
-            body{{background:#f6f6f6;padding:4px;}}
-            table{{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);}}
+            html,body{{background:#f6f6f6;}}
+            .wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px;border-radius:10px;}}
+            table{{min-width:700px;width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);}}
             thead tr{{background:#131f33;border-bottom:3px solid #ecfa64;}}
-            th{{padding:12px 16px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.7);text-align:left;text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap;}}
+            th{{padding:10px 12px;font-size:10px;font-weight:600;color:rgba(255,255,255,0.7);text-align:left;text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap;}}
             th.th-center{{text-align:center;}}
             tbody tr{{border-bottom:1px solid #f0f0f0;transition:background .15s;}}
             tbody tr:hover{{background:#f8f8f8;}}
-            td{{padding:12px 16px;font-size:13px;color:#333;}}
+            td{{padding:10px 12px;font-size:12px;color:#333;white-space:nowrap;}}
             .td-company{{font-weight:700;color:#131f33;font-size:13px;}}
             .td-num{{font-weight:600;color:#1a1a1a;}}
             .td-center{{text-align:center;}}
             .td-green{{color:#16a34a;font-weight:600;}}
         </style></head><body>
-        <table>
+        <div class="wrap"><table>
             <thead><tr>
                 <th>Spółka</th><th>Kurs</th>
                 <th class="th-center">C/Z</th><th class="th-center">C/WK</th>
-                <th class="th-center">EV/EBITDA</th><th class="th-center">Dywidenda</th>
-                <th>Trend SMA50</th><th class="th-center">Score</th>
-                <th class="th-center">Rekomendacja</th><th class="th-center">Źródło</th>
+                <th class="th-center">EV/EBITDA</th><th class="th-center">DY%</th>
+                <th>Trend</th><th class="th-center">Score</th>
+                <th class="th-center">Rekomen.</th><th class="th-center">Źródło</th>
             </tr></thead>
             <tbody>{rows_html}</tbody>
-        </table></body></html>"""
+        </table></div></body></html>"""
 
-        table_height = len(recom_list) * 52 + 80
+        table_height = len(recom_list) * 50 + 60
         components.html(table_html, height=table_height, scrolling=False)
     else:
         st.info("Brak załadowanych rekomendacji. Kliknij przycisk powyżej, aby wygenerować rekomendacje sesyjne o 8:00.")
@@ -409,31 +456,33 @@ with tab2:
         if "live_prices" not in st.session_state or not st.session_state["live_prices"]:
             st.session_state["live_prices"] = {row["Spółka"]: row["Kurs (PLN)"] for _, row in df_holdings.iterrows()}
 
-        col_ref, col_lbl = st.columns([1, 2])
-        with col_ref:
-            if st.button("🔄 Odśwież Kursy Bieżące (Yahoo Finance)", use_container_width=True):
-                with st.spinner("Pobieranie aktualnych notowań..."):
-                    live_prices = {}
-                    for ticker in df_holdings["Spółka"].unique():
-                        symbol = YFIN_TICKERS.get(ticker, f"{ticker}.WA")
-                        try:
+        st.markdown("""
+        <div class="note-card">
+          <div class="note-bar note-bar-info"></div>
+          <div class="note-body" style="font-size:12px;">
+            Limit spółki: <b>15%</b> &nbsp;|&nbsp; Limit sektora: <b>30%</b> &nbsp;|&nbsp;
+            Stop-Loss: <b>−10%</b> &nbsp;|&nbsp; Take-Profit: <b>+25%</b>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("🔄 Odśwież Kursy (Yahoo Finance)", use_container_width=True):
+            with st.spinner("Pobieranie aktualnych notowań..."):
+                live_prices = {}
+                for ticker in df_holdings["Spółka"].unique():
+                    symbol = YFIN_TICKERS.get(ticker)
+                    try:
+                        if symbol:
                             yft = yf.Ticker(symbol)
                             hist = yft.history(period="1d")
                             if not hist.empty:
                                 live_prices[ticker] = float(hist["Close"].iloc[-1])
-                            else:
-                                live_prices[ticker] = float(df_holdings.loc[df_holdings["Spółka"] == ticker, "Kurs (PLN)"].values[0])
-                        except Exception:
-                            live_prices[ticker] = float(df_holdings.loc[df_holdings["Spółka"] == ticker, "Kurs (PLN)"].values[0])
-                    st.session_state["live_prices"] = live_prices
-                    st.success("Zaktualizowano kursy!")
-                    st.rerun()
-        with col_lbl:
-            st.markdown(f"""
-            * **Limit alokacji spółki:** `max 15.0%`
-            * **Limit alokacji sektora:** `max 30.0%`
-            * **Zabezpieczenie:** Stop-Loss (`-10.0%`) | Take-Profit Trailing (`+25.0%`)
-            """)
+                                continue
+                    except Exception:
+                        pass
+                    live_prices[ticker] = float(df_holdings.loc[df_holdings["Spółka"] == ticker, "Kurs (PLN)"].values[0])
+                st.session_state["live_prices"] = live_prices
+                st.success("Zaktualizowano kursy!")
+                st.rerun()
 
         # Recalculate valuations based on live prices
         df_strat = df_holdings.copy()
@@ -468,8 +517,8 @@ with tab2:
                 st.markdown(f'<div class="note-card"><div class="note-bar {bar_cls}"></div><div class="note-body">{warn}</div></div>', unsafe_allow_html=True)
             st.markdown("---")
 
-        # Visual charts (Stock allocation vs Sector allocation)
-        col_ch1, col_ch2 = st.columns(2)
+        # Visual charts — side by side on wide screens, stacked on mobile (via CSS)
+        col_ch1, col_ch2 = st.columns([1, 1])
         UXR_COLORS = ["#131f33", "#1f2b40", "#ecfa64", "#cde200", "#5B8DEF", "#FF9F43", "#FF5C5C", "#34d399", "#a78bfa", "#f87171"]
 
         with col_ch1:
@@ -538,30 +587,32 @@ with tab2:
 
         risk_html = f"""<!DOCTYPE html><html><head>
         <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
         <style>
             *{{margin:0;padding:0;box-sizing:border-box;font-family:'Poppins',sans-serif;}}
-            body{{background:#f6f6f6;padding:4px;}}
-            table{{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);}}
+            html,body{{background:#f6f6f6;}}
+            .wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px;border-radius:10px;}}
+            table{{min-width:500px;width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);}}
             thead tr{{background:#131f33;border-bottom:3px solid #ecfa64;}}
-            th{{padding:12px 16px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.7);text-align:left;text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap;}}
+            th{{padding:10px 12px;font-size:10px;font-weight:600;color:rgba(255,255,255,0.7);text-align:left;text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap;}}
             th.th-center{{text-align:center;}}
             tbody tr{{border-bottom:1px solid #f0f0f0;}}
-            td{{padding:12px 16px;font-size:13px;color:#333;}}
+            td{{padding:10px 12px;font-size:13px;color:#333;white-space:nowrap;}}
             .td-company{{font-weight:700;color:#131f33;}}
             .td-num{{font-weight:500;}}
             .td-bold{{font-weight:700;color:#1a1a1a;}}
             .td-center{{text-align:center;}}
         </style></head><body>
-        <table>
+        <div class="wrap"><table>
             <thead><tr>
                 <th>Spółka</th><th>Ilość</th>
                 <th>Cena Wejścia</th><th>Kurs Bieżący</th>
-                <th>Wynik (%)</th><th class="th-center">Status / Alert</th>
+                <th>Wynik (%)</th><th class="th-center">Status</th>
             </tr></thead>
             <tbody>{risk_rows_html}</tbody>
-        </table></body></html>"""
+        </table></div></body></html>"""
 
-        risk_height = len(df_strat) * 52 + 80
+        risk_height = len(df_strat) * 50 + 60
         components.html(risk_html, height=risk_height, scrolling=False)
 
 # ==========================================
@@ -680,52 +731,36 @@ with tab3:
         total_delta_str = f"{organic_profit_pln:+.2f} zł ({total_change_pct:+.2f}%) zysku netto bez wpłat"
         total_delta_class = "delta-plus" if organic_profit_pln >= 0 else "delta-minus"
         
-        # Display KPIs using custom HTML for beautiful mobile-first design (5 columns)
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">Wycena Portfela ({latest_date})</div>
-                <div class="metric-value">{latest_val:,.2f} PLN</div>
-                <div class="metric-delta {daily_delta_class}">Sesja: {daily_change_pln:+.2f} PLN</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-        with col2:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #27ae60;">
-                <div class="metric-title">Wynik Ostatniego Dnia</div>
-                <div class="metric-value">{daily_change_pln:+.2f} PLN</div>
-                <div class="metric-delta {daily_delta_class}">{daily_delta_str}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col3:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #cde200;">
-                <div class="metric-title">Skumulowany Zysk Netto</div>
-                <div class="metric-value">{total_change_pct:+.2f}%</div>
-                <div class="metric-delta {total_delta_class}">{total_delta_str}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col4:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #5B8DEF;">
-                <div class="metric-title">Suma Wpłat (od Q1 2026)</div>
-                <div class="metric-value">{latest_deposits:,.2f} PLN</div>
-                <div class="metric-delta" style="color:#808080;">Kapitał zewnętrzny</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col5:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #FF9F43;">
-                <div class="metric-title">Gotówka w Portfelu</div>
-                <div class="metric-value">{latest_cash:,.2f} PLN</div>
-                <div class="metric-delta" style="color:#808080;">Wolne środki</div>
-            </div>
-            """, unsafe_allow_html=True)
+        # KPI grid — CSS auto-wrap: 1 col mobile → 2 col tablet → 5 col desktop
+        st.markdown(f"""
+        <div class="metrics-grid">
+          <div class="metric-card wide">
+            <div class="metric-title">Wycena Portfela ({latest_date})</div>
+            <div class="metric-value">{latest_val:,.2f} PLN</div>
+            <div class="metric-delta {daily_delta_class}">Sesja: {daily_change_pln:+.2f} PLN</div>
+          </div>
+          <div class="metric-card" style="border-left-color:#27ae60;">
+            <div class="metric-title">Wynik Sesji</div>
+            <div class="metric-value">{daily_change_pln:+.2f} PLN</div>
+            <div class="metric-delta {daily_delta_class}">{daily_change_pct:+.2f}%</div>
+          </div>
+          <div class="metric-card" style="border-left-color:#cde200;">
+            <div class="metric-title">Zysk Netto (od startu)</div>
+            <div class="metric-value">{total_change_pct:+.2f}%</div>
+            <div class="metric-delta {total_delta_class}">{organic_profit_pln:+.2f} PLN</div>
+          </div>
+          <div class="metric-card" style="border-left-color:#5B8DEF;">
+            <div class="metric-title">Suma Wpłat</div>
+            <div class="metric-value">{latest_deposits:,.2f} PLN</div>
+            <div class="metric-delta" style="color:#808080;">Kapitał zewnętrzny</div>
+          </div>
+          <div class="metric-card" style="border-left-color:#FF9F43;">
+            <div class="metric-title">Gotówka</div>
+            <div class="metric-value">{latest_cash:,.2f} PLN</div>
+            <div class="metric-delta" style="color:#808080;">Wolne środki</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
         st.warning("Brak danych historycznych. Wgraj raport PDF lub wykaz instrumentów, aby wygenerować metryki.")
 
@@ -775,7 +810,7 @@ with tab3:
         df_holdings = pd.DataFrame()
         
     if not df_holdings.empty:
-        col_pie, col_table = st.columns([2, 3])
+        col_pie, col_table = st.columns([1, 1])
         
         with col_pie:
             # Pie chart for portfolio structure
