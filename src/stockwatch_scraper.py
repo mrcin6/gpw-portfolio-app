@@ -69,16 +69,22 @@ def parse_polish_number(val_str):
 
 class StockwatchScraper:
     def __init__(self, phpsessid=None):
-        self.phpsessid = phpsessid
+        # Stockwatch.pl runs on ASP.NET — the real session cookie is ASP.NET_SessionId.
+        # The parameter is kept as 'phpsessid' for UI/settings backwards compatibility,
+        # but we now set the correct ASP.NET cookie name.
+        self.session_cookie = phpsessid
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7"
+            "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.stockwatch.pl/"
         }
         self.session = requests.Session()
         if phpsessid:
-            # Set the PHPSESSID cookie in the session
-            self.session.cookies.set("PHPSESSID", phpsessid, domain="stockwatch.pl")
+            # ASP.NET session cookie (equivalent of PHPSESSID in PHP apps)
+            self.session.cookies.set("ASP.NET_SessionId", phpsessid, domain="stockwatch.pl")
+            # Also set as .ASPXAUTH in case the user copied the auth token instead
+            self.session.cookies.set(".ASPXAUTH", phpsessid, domain="stockwatch.pl")
 
     def fetch_stockwatch_html_indicators(self, slug):
         """Scrapes standard company pages on Stockwatch.pl for fundamental ratios"""
@@ -302,3 +308,102 @@ class StockwatchScraper:
             return {"action": "SPRZEDAJ", "color": "#DC3545", "text_color": "#FFFFFF"}
         else:
             return {"action": "TRZYMAJ", "color": "#FFC107", "text_color": "#212529"}
+
+    def get_new_analyses(self, tickers, seen_ids=None, pages=3):
+        """
+        Scrapes /wiadomosci/analizyforum for technical/fundamental analyses
+        matching any of the given tickers. Returns list of new articles (not in seen_ids).
+        Requires a valid ASP.NET_SessionId cookie for Premium access.
+        """
+        if not self.session_cookie:
+            return [], "Brak ciasteczka sesji — skonfiguruj ASP.NET_SessionId w sidebarze."
+
+        if seen_ids is None:
+            seen_ids = set()
+        else:
+            seen_ids = set(seen_ids)
+
+        tickers_upper = {t.upper() for t in tickers}
+        new_articles = []
+
+        for page in range(1, pages + 1):
+            url = f"https://www.stockwatch.pl/wiadomosci/analizyforum?page={page}" if page > 1 else "https://www.stockwatch.pl/wiadomosci/analizyforum"
+            try:
+                resp = self.session.get(url, headers=self.headers, timeout=12)
+                if resp.status_code != 200:
+                    logger.warning(f"Stockwatch analyses HTTP {resp.status_code} on page {page}")
+                    break
+
+                soup = BeautifulSoup(resp.text, "html.parser")
+
+                # Each article is typically in a <article> or <div> with a link containing the article ID
+                articles = soup.find_all("a", href=True)
+                for a in articles:
+                    href = a["href"]
+                    # Articles have URLs like /wiadomosci/...,xternal,12345
+                    if ",xternal," not in href:
+                        continue
+                    try:
+                        article_id = href.split(",xternal,")[-1].split(",")[0].strip()
+                        if not article_id.isdigit():
+                            continue
+                    except Exception:
+                        continue
+
+                    title = a.get_text(strip=True)
+                    if not title:
+                        # Try parent element for richer text
+                        parent = a.find_parent()
+                        title = parent.get_text(strip=True) if parent else ""
+
+                    title_upper = title.upper()
+                    matched_ticker = None
+                    for t in tickers_upper:
+                        if t in title_upper:
+                            matched_ticker = t
+                            break
+
+                    if not matched_ticker:
+                        continue
+
+                    if article_id in seen_ids:
+                        continue
+
+                    # Extract date from nearest sibling/parent text
+                    date_str = ""
+                    parent = a.find_parent()
+                    if parent:
+                        full_text = parent.get_text(" ", strip=True)
+                        import re
+                        date_match = re.search(r"(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})", full_text)
+                        if date_match:
+                            date_str = date_match.group(1)
+
+                    # Determine analysis type from title
+                    t_low = title.lower()
+                    if any(w in t_low for w in ["wykres", "technicz", "sma", "rsi", "macd", "świec"]):
+                        kind = "Analiza techniczna"
+                        kind_color = "#5B8DEF"
+                    elif any(w in t_low for w in ["fundamentaln", "wynik", "raport", "zysk", "przychód", "dywidend"]):
+                        kind = "Analiza fundamentalna"
+                        kind_color = "#ecfa64"
+                    else:
+                        kind = "Artykuł / komentarz"
+                        kind_color = "#cde200"
+
+                    new_articles.append({
+                        "id": article_id,
+                        "ticker": matched_ticker,
+                        "title": title[:120],
+                        "date": date_str,
+                        "url": f"https://www.stockwatch.pl{href}" if href.startswith("/") else href,
+                        "kind": kind,
+                        "kind_color": kind_color,
+                    })
+                    seen_ids.add(article_id)
+
+            except Exception as e:
+                logger.error(f"Error fetching analyses page {page}: {e}")
+                break
+
+        return new_articles, None

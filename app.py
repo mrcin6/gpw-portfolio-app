@@ -189,12 +189,23 @@ if new_total_deposits != settings["total_deposits"]:
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🔑 Autoryzacja Stockwatch")
+st.sidebar.subheader("🔑 Autoryzacja Stockwatch Premium")
+st.sidebar.markdown("""
+<div style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1.6;margin-bottom:8px;">
+Stockwatch.pl używa <b style="color:#ecfa64;">ASP.NET_SessionId</b> — nie PHPSESSID.<br><br>
+<b>Jak znaleźć:</b><br>
+① Zaloguj się na stockwatch.pl<br>
+② DevTools (F12) → <b>Application</b><br>
+③ Cookies → <b>https://www.stockwatch.pl</b><br>
+④ Skopiuj wartość <b>ASP.NET_SessionId</b><br><br>
+<i>Alternatywnie: Network → dowolny request → Request Headers → Cookie</i>
+</div>
+""", unsafe_allow_html=True)
 new_phpsessid = st.sidebar.text_input(
-    "Ciasteczko PHPSESSID",
+    "ASP.NET_SessionId (cookie sesji)",
     value=settings.get("phpsessid", ""),
     type="password",
-    help="Wpisz wartość ciasteczka PHPSESSID z zalogowanej sesji na Stockwatch.pl, aby pobierać najświeższe wskaźniki giełdowe."
+    help="Wartość ciasteczka ASP.NET_SessionId z zalogowanej sesji Premium na stockwatch.pl. Bez niego dane pobierane są z Yahoo Finance lub lokalnej bazy (L2/L3)."
 )
 
 if new_phpsessid != settings.get("phpsessid", ""):
@@ -203,11 +214,14 @@ if new_phpsessid != settings.get("phpsessid", ""):
         json.dump(settings, f)
     st.rerun()
 
+ALERTS_PATH = os.path.join(BASE_DIR, "data", "stockwatch_alerts.json")
+
 # TAB NAVIGATION
-tab1, tab2, tab3 = st.tabs([
-    "☀️ Rekomendacje 8:00", 
-    "🎯 Strategia", 
-    "📊 Wyniki i Portfel"
+tab1, tab2, tab3, tab4 = st.tabs([
+    "☀️ Rekomendacje 8:00",
+    "🎯 Strategia",
+    "📊 Wyniki i Portfel",
+    "🔔 Alerty Stockwatch",
 ])
 
 # ==========================================
@@ -780,3 +794,128 @@ with tab3:
             st.dataframe(df_disp, use_container_width=True, hide_index=True)
     else:
         st.info("Wgraj raport PDF, który zawiera wykaz posiadanych instrumentów finansowych, aby wyświetlić ich strukturę.")
+
+# ==========================================
+# TAB 4: ALERTY STOCKWATCH PREMIUM
+# ==========================================
+with tab4:
+    st.header("🔔 Alerty Stockwatch — Nowe Analizy")
+    st.markdown("Monitoruje pojawienie się nowych analiz technicznych i fundamentalnych na Stockwatch Premium dla spółek z Twojego portfela i watchlisty.")
+
+    has_cookie = bool(settings.get("phpsessid", "").strip())
+
+    if not has_cookie:
+        st.markdown("""
+        <div class="note-card">
+          <div class="note-bar note-bar-warn"></div>
+          <div class="note-body">
+            <b>Wymagane: ciasteczko sesji ASP.NET_SessionId</b><br>
+            Bez niego Stockwatch Premium nie udostępnia analiz. Wpisz wartość w sidebarze (lewy panel).<br><br>
+            <b>Jak znaleźć:</b> F12 → Application → Cookies → https://www.stockwatch.pl → skopiuj <b>ASP.NET_SessionId</b>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="note-card"><div class="note-bar note-bar-info"></div><div class="note-body">Sesja Premium aktywna ✓ &nbsp;|&nbsp; Sprawdzane spółki: portfel + watchlista</div></div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Load alerts state
+    if os.path.exists(ALERTS_PATH):
+        try:
+            with open(ALERTS_PATH, "r", encoding="utf-8") as f:
+                alerts_state = json.load(f)
+        except Exception:
+            alerts_state = {"seen_ids": [], "articles": []}
+    else:
+        alerts_state = {"seen_ids": [], "articles": []}
+
+    # Build combined ticker list: portfolio + watchlist
+    alert_tickers = list(set(watchlist))
+    if os.path.exists(HOLDINGS_PATH):
+        try:
+            df_h = pd.read_csv(HOLDINGS_PATH)
+            for t in df_h["Spółka"].tolist():
+                if t not in alert_tickers:
+                    alert_tickers.append(t)
+        except Exception:
+            pass
+
+    col_btn_a, col_info_a = st.columns([1, 2])
+    with col_btn_a:
+        check_clicked = st.button("🔍 Sprawdź nowe analizy", use_container_width=True, type="primary", disabled=not has_cookie)
+    with col_info_a:
+        st.markdown(f"**Obserwowane spółki ({len(alert_tickers)}):** `{', '.join(sorted(alert_tickers))}`")
+
+    if check_clicked and has_cookie:
+        with st.spinner("Pobieram analizy ze Stockwatch Premium..."):
+            scraper_alerts = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
+            new_articles, error_msg = scraper_alerts.get_new_analyses(
+                tickers=alert_tickers,
+                seen_ids=alerts_state.get("seen_ids", []),
+                pages=3
+            )
+        if error_msg:
+            st.error(error_msg)
+        elif not new_articles:
+            st.success("Brak nowych analiz — wszystkie już widziane.")
+        else:
+            # Merge new into history
+            all_articles = new_articles + alerts_state.get("articles", [])
+            all_seen = list({a["id"] for a in all_articles})
+            alerts_state = {"seen_ids": all_seen, "articles": all_articles[:200]}
+            with open(ALERTS_PATH, "w", encoding="utf-8") as f:
+                json.dump(alerts_state, f, ensure_ascii=False, indent=2)
+            st.success(f"Znaleziono **{len(new_articles)}** nowych analiz!")
+            st.rerun()
+
+    st.markdown("---")
+
+    # Display stored articles
+    all_stored = alerts_state.get("articles", [])
+    if not all_stored:
+        st.info("Brak zapisanych alertów. Kliknij 'Sprawdź nowe analizy' (wymaga ciasteczka Premium).")
+    else:
+        # Filter controls
+        col_f1, col_f2 = st.columns([1, 2])
+        with col_f1:
+            kind_filter = st.selectbox("Typ analizy", ["Wszystkie", "Analiza techniczna", "Analiza fundamentalna", "Artykuł / komentarz"])
+        with col_f2:
+            ticker_filter = st.multiselect("Spółka", sorted({a["ticker"] for a in all_stored}))
+
+        filtered = [
+            a for a in all_stored
+            if (kind_filter == "Wszystkie" or a["kind"] == kind_filter)
+            and (not ticker_filter or a["ticker"] in ticker_filter)
+        ]
+
+        st.markdown(f"**{len(filtered)}** alertów")
+
+        # Render articles as UXR note cards
+        for art in filtered[:50]:
+            kind_bar = "note-bar-info" if "technicz" in art["kind"].lower() else ("note-bar-warn" if "fundamental" in art["kind"].lower() else "note-bar-info")
+            date_badge = f'<span style="font-size:10px;color:#808080;margin-left:8px;">{art["date"]}</span>' if art["date"] else ""
+            ticker_badge = f'<span style="background:#131f33;color:#ecfa64;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;margin-right:6px;">{art["ticker"]}</span>'
+            kind_badge = f'<span style="border:1.5px solid {art["kind_color"]};color:{art["kind_color"]};padding:1px 7px;border-radius:4px;font-size:10px;font-weight:600;">{art["kind"]}</span>'
+            link = f'<a href="{art["url"]}" target="_blank" style="color:#5B8DEF;font-size:12px;font-weight:500;text-decoration:none;">Otwórz ↗</a>'
+            st.markdown(f"""
+            <div class="note-card">
+              <div class="note-bar {kind_bar}"></div>
+              <div class="note-body">
+                {ticker_badge}{kind_badge}{date_badge}<br>
+                <span style="font-size:13px;color:#1a1a1a;">{art["title"]}</span>
+                &nbsp;&nbsp;{link}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        if len(filtered) > 50:
+            st.caption(f"Pokazano 50 z {len(filtered)} alertów.")
+
+        col_clear, _ = st.columns([1, 3])
+        with col_clear:
+            if st.button("🗑️ Wyczyść historię alertów", use_container_width=True):
+                alerts_state = {"seen_ids": [], "articles": []}
+                with open(ALERTS_PATH, "w", encoding="utf-8") as f:
+                    json.dump(alerts_state, f)
+                st.rerun()
