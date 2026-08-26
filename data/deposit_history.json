@@ -1,0 +1,13 @@
+[
+  {"date": "2026-08-07", "amount": 4000.0, "note": "2x wpłata"},
+  {"date": "2026-07-20", "amount": 1500.0, "note": "wpłata"},
+  {"date": "2026-07-10", "amount": 1000.0, "note": "wpłata"},
+  {"date": "2026-06-10", "amount": 3000.0, "note": "wpłata"},
+  {"date": "2026-06-01", "amount": 2000.0, "note": "wpłata"},
+  {"date": "2026-05-11", "amount": 3000.0, "note": "wpłata"},
+  {"date": "2026-03-30", "amount": 10000.0, "note": "wpłata"},
+  {"date": "2026-02-12", "amount": 3000.0, "note": "wpłata"},
+  {"date": "2025-12-18", "amount": 6000.0, "note": "wpłata"},
+  {"date": "2025-12-03", "amount": 500.0, "note": "wpłata"},
+  {"date": "2025-10-15", "amount": 1500.0, "note": "wpłata"}
+]

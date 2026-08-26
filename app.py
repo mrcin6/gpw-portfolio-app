@@ -2,6 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import os
 import tempfile
 import json
@@ -22,6 +23,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_PATH = os.path.join(BASE_DIR, "data", "portfolio_history.csv")
 HOLDINGS_PATH = os.path.join(BASE_DIR, "data", "current_holdings.csv")
 SETTINGS_PATH = os.path.join(BASE_DIR, "data", "portfolio_settings.json")
+DEPOSIT_HISTORY_PATH = os.path.join(BASE_DIR, "data", "deposit_history.json")
 
 # Create data directory if it doesn't exist
 os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
@@ -817,40 +819,127 @@ with tab3:
 
     st.markdown("---")
 
-    # 3. WYKRES EWOLUCJI PORTFELA W CZASIE (TRZYWYMIAROWY: WARTOŚĆ vs ZYSK vs WPŁATY)
+    # 3. WYKRES EWOLUCJI PORTFELA + ZNACZNIKI WPŁAT
     if not df_history.empty:
         st.subheader("Ewolucja Portfela, Zysku i Sumy Wpłat")
-        
-        # Melt dataframe to make it suitable for Plotly Express multi-line
+
+        # Load deposit history
+        deposits = []
+        if os.path.exists(DEPOSIT_HISTORY_PATH):
+            try:
+                with open(DEPOSIT_HISTORY_PATH, "r", encoding="utf-8") as _f:
+                    deposits = json.load(_f)
+            except Exception:
+                deposits = []
+
+        # Convert dates to datetime for proper vline positioning
+        df_history["Data_dt"] = pd.to_datetime(df_history["Data"])
         df_plot = df_history.melt(
-            id_vars=["Data"],
+            id_vars=["Data_dt"],
             value_vars=["Wartość Całkowita (PLN)", "Zysk (PLN)", "Wpłaty Skumulowane (PLN)"],
             var_name="Wskaźnik",
             value_name="Wartość (PLN)"
         )
-        
+
         fig = px.line(
-            df_plot, x="Data", y="Wartość (PLN)", color="Wskaźnik",
+            df_plot, x="Data_dt", y="Wartość (PLN)", color="Wskaźnik",
             title="Ewolucja Wartości Portfela vs Zysk Organiczny vs Suma Wpłat",
             markers=True,
             color_discrete_map={
                 "Wartość Całkowita (PLN)": "#131f33",
-                "Zysk (PLN)": "#ecfa64",
+                "Zysk (PLN)": "#cde200",
                 "Wpłaty Skumulowane (PLN)": "#5B8DEF"
             }
         )
+
+        # Add vertical markers for each deposit within chart date range
+        chart_min = df_history["Data_dt"].min()
+        chart_max = df_history["Data_dt"].max()
+        for dep in deposits:
+            dep_dt = pd.to_datetime(dep["date"])
+            if chart_min <= dep_dt <= chart_max:
+                fig.add_vline(
+                    x=dep_dt,
+                    line_dash="dot", line_color="#5B8DEF", line_width=1.5,
+                    annotation_text=f"+{dep['amount']:,.0f}",
+                    annotation_font=dict(size=9, color="#5B8DEF", family="Poppins, sans-serif"),
+                    annotation_position="top left",
+                    annotation_bgcolor="rgba(255,255,255,0.75)",
+                )
+
         fig.update_layout(
             hovermode="x unified",
             margin=dict(l=10, r=10, t=50, b=10),
-            xaxis_title="Data", yaxis_title="Wartość (PLN)",
+            xaxis_title=None, yaxis_title="Wartość (PLN)",
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             font=dict(family="Poppins, sans-serif", color="#1a1a1a"),
             title_font=dict(family="Poppins, sans-serif", size=15, color="#131f33"),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                         font=dict(family="Poppins, sans-serif")),
-            yaxis=dict(gridcolor="#f0f0f0"), xaxis=dict(gridcolor="#f0f0f0")
+            yaxis=dict(gridcolor="#f0f0f0"),
+            xaxis=dict(gridcolor="#f0f0f0", tickformat="%d %b %Y")
         )
         st.plotly_chart(fig, use_container_width=True)
+
+    # 3b. HISTORIA WPŁAT NA RACHUNEK
+    st.markdown('<div class="uxr-subheader"><div class="uxr-subheader-bar"></div><div class="uxr-subheader-text">💳 Historia Wpłat (ostatnie 12 miesięcy)</div></div>', unsafe_allow_html=True)
+
+    deposits_for_chart = []
+    if os.path.exists(DEPOSIT_HISTORY_PATH):
+        try:
+            with open(DEPOSIT_HISTORY_PATH, "r", encoding="utf-8") as _f:
+                deposits_for_chart = json.load(_f)
+        except Exception:
+            deposits_for_chart = []
+
+    if deposits_for_chart:
+        df_dep = pd.DataFrame(deposits_for_chart)
+        df_dep["date"] = pd.to_datetime(df_dep["date"])
+        df_dep = df_dep.sort_values("date").reset_index(drop=True)
+        df_dep["cumulative"] = df_dep["amount"].cumsum()
+        dep_total = df_dep["amount"].sum()
+        dep_count = len(df_dep)
+
+        fig_dep = go.Figure()
+        fig_dep.add_trace(go.Bar(
+            x=df_dep["date"], y=df_dep["amount"],
+            name="Wpłata", marker_color="#5B8DEF",
+            hovertemplate="<b>%{x|%d %b %Y}</b><br>Wpłata: %{y:,.0f} PLN<extra></extra>"
+        ))
+        fig_dep.add_trace(go.Scatter(
+            x=df_dep["date"], y=df_dep["cumulative"],
+            name="Narastająco", mode="lines+markers",
+            line=dict(color="#ecfa64", width=2),
+            marker=dict(size=6, color="#ecfa64"),
+            hovertemplate="<b>%{x|%d %b %Y}</b><br>Łącznie: %{y:,.0f} PLN<extra></extra>",
+            yaxis="y2"
+        ))
+        fig_dep.update_layout(
+            title=f"Wpłaty na rachunek — {dep_count} transakcji, łącznie {dep_total:,.0f} PLN",
+            title_font=dict(family="Poppins, sans-serif", size=14, color="#131f33"),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Poppins, sans-serif", color="#1a1a1a"),
+            margin=dict(l=10, r=10, t=50, b=10),
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            xaxis=dict(gridcolor="#f0f0f0", tickformat="%d %b %Y"),
+            yaxis=dict(title="Kwota (PLN)", gridcolor="#f0f0f0", side="left"),
+            yaxis2=dict(title="Narastająco (PLN)", overlaying="y", side="right",
+                        showgrid=False, tickformat=",.0f")
+        )
+        st.plotly_chart(fig_dep, use_container_width=True)
+
+        # Deposit table
+        with st.expander("📋 Tabela wpłat"):
+            df_dep_disp = df_dep[["date", "amount", "cumulative"]].copy()
+            df_dep_disp.columns = ["Data", "Kwota (PLN)", "Narastająco (PLN)"]
+            df_dep_disp["Data"] = df_dep_disp["Data"].dt.strftime("%d.%m.%Y")
+            df_dep_disp["Kwota (PLN)"] = df_dep_disp["Kwota (PLN)"].map(lambda x: f"{x:,.2f} zł")
+            df_dep_disp["Narastająco (PLN)"] = df_dep_disp["Narastająco (PLN)"].map(lambda x: f"{x:,.2f} zł")
+            st.dataframe(df_dep_disp.iloc[::-1].reset_index(drop=True),
+                         use_container_width=True, hide_index=True)
+    else:
+        st.info("Brak pliku historii wpłat (data/deposit_history.json).")
         
     # 4. STRUCTURA I SKŁAD PORTFELA
     st.subheader("Skład i Struktura Portfela")
