@@ -505,9 +505,11 @@ with tab2:
             "LUBAWA":    "Przemysł i Obrona",
         }
 
-        # Initialize live prices from the holdings CSV (which represents purchase cost basis)
+        # Initialize live prices from the holdings CSV (purchase price as default)
         if "live_prices" not in st.session_state or not st.session_state["live_prices"]:
             st.session_state["live_prices"] = {row["Spółka"]: row["Kurs (PLN)"] for _, row in df_holdings.iterrows()}
+        if "live_sources" not in st.session_state:
+            st.session_state["live_sources"] = {row["Spółka"]: "Cena zakupu (PDF)" for _, row in df_holdings.iterrows()}
 
         st.markdown("""
         <div class="note-card">
@@ -518,22 +520,25 @@ with tab2:
           </div>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("🔄 Odśwież Kursy (Yahoo Finance)", use_container_width=True):
-            with st.spinner("Pobieranie aktualnych notowań..."):
+        if st.button("🔄 Odśwież Kursy", use_container_width=True):
+            with st.spinner("Pobieranie aktualnych notowań (Stockwatch → Biznesradar → Yahoo)..."):
+                scraper_strat = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
                 live_prices = {}
+                live_sources = {}
                 for ticker in df_holdings["Spółka"].unique():
-                    symbol = YFIN_TICKERS.get(ticker)
-                    try:
-                        if symbol:
-                            yft = yf.Ticker(symbol)
-                            hist = yft.history(period="1d")
-                            if not hist.empty:
-                                live_prices[ticker] = float(hist["Close"].iloc[-1])
-                                continue
-                    except Exception:
-                        pass
-                    live_prices[ticker] = float(df_holdings.loc[df_holdings["Spółka"] == ticker, "Kurs (PLN)"].values[0])
+                    indicators = scraper_strat.get_indicators(ticker)
+                    price = indicators.get("price")
+                    source = indicators.get("source", "")
+                    if price and "Lokalna" not in source:
+                        live_prices[ticker] = float(price)
+                        live_sources[ticker] = source
+                    else:
+                        live_prices[ticker] = float(
+                            df_holdings.loc[df_holdings["Spółka"] == ticker, "Kurs (PLN)"].values[0]
+                        )
+                        live_sources[ticker] = "Cena zakupu (PDF)"
                 st.session_state["live_prices"] = live_prices
+                st.session_state["live_sources"] = live_sources
                 st.success("Zaktualizowano kursy!")
                 st.rerun()
 
@@ -617,16 +622,23 @@ with tab2:
             change_pct = ((current - purchase) / purchase) * 100 if purchase > 0 else 0.0
             change_str = f"{change_pct:+.2f}%"
             change_color = "#16a34a" if change_pct >= 0 else "#dc2626"
+            src = st.session_state.get("live_sources", {}).get(r["Spółka"], "")
+            src_color = ("#7c3aed" if "Premium" in src
+                         else "#16a34a" if "Biznesradar" in src
+                         else "#2563eb" if "Yahoo" in src
+                         else "#9ca3af")
 
             if change_pct <= -10.0:
-                badge = '<span style="background:#dc2626;color:#fff;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128721; STOP-LOSS!</span>'
+                badge = '<span style="background:#dc2626;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128721; STOP-LOSS!</span>'
                 row_bg = "#fff5f5"
             elif change_pct >= 25.0:
-                badge = '<span style="background:#16a34a;color:#fff;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9989; TAKE-PROFIT!</span>'
+                badge = '<span style="background:#16a34a;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9989; TAKE-PROFIT!</span>'
                 row_bg = "#f0fdf4"
             else:
-                badge = '<span style="background:#131f33;color:#ecfa64;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9711; OK</span>'
+                badge = '<span style="background:#131f33;color:#ecfa64;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9711; OK</span>'
                 row_bg = "#ffffff"
+
+            src_badge = f'<span style="border:1.5px solid {src_color};color:{src_color};padding:1px 6px;border-radius:4px;font-size:9px;font-weight:700;">{src.split("(")[0].strip() or "PDF"}</span>'
 
             risk_rows_html += f"""
             <tr style="background:{row_bg};">
@@ -634,8 +646,9 @@ with tab2:
                 <td class="td-num">{int(r['Ilość']):,}</td>
                 <td class="td-num">{purchase:,.2f} zł</td>
                 <td class="td-num td-bold">{current:,.2f} zł</td>
-                <td style="padding:12px 16px;font-size:14px;font-weight:700;color:{change_color};">{change_str}</td>
+                <td style="padding:10px 12px;font-size:14px;font-weight:700;color:{change_color};">{change_str}</td>
                 <td class="td-center">{badge}</td>
+                <td class="td-center">{src_badge}</td>
             </tr>"""
 
         risk_html = f"""<!DOCTYPE html><html><head>
@@ -645,7 +658,7 @@ with tab2:
             *{{margin:0;padding:0;box-sizing:border-box;font-family:'Poppins',sans-serif;}}
             html,body{{background:#f6f6f6;}}
             .wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px;border-radius:10px;}}
-            table{{min-width:500px;width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);}}
+            table{{min-width:560px;width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);}}
             thead tr{{background:#131f33;border-bottom:3px solid #ecfa64;}}
             th{{padding:10px 12px;font-size:10px;font-weight:600;color:rgba(255,255,255,0.7);text-align:left;text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap;}}
             th.th-center{{text-align:center;}}
@@ -660,7 +673,7 @@ with tab2:
             <thead><tr>
                 <th>Spółka</th><th>Ilość</th>
                 <th>Cena Wejścia</th><th>Kurs Bieżący</th>
-                <th>Wynik (%)</th><th class="th-center">Status</th>
+                <th>Wynik (%)</th><th class="th-center">Status</th><th class="th-center">Źródło</th>
             </tr></thead>
             <tbody>{risk_rows_html}</tbody>
         </table></div></body></html>"""
