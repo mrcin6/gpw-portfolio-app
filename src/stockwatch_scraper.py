@@ -382,12 +382,17 @@ class StockwatchScraper:
         # Add a tiny random fluctuation of +/-2% to make it feel "live"
         noise = 1.0 + random.uniform(-0.02, 0.02)
         
+        def _apply_noise(v):
+            if v is None:
+                return None
+            return round(v * noise, 2) if v > 0 else v
+
         return {
-            "c_z": round(base["c_z"] * noise, 2) if base["c_z"] > 0 else base["c_z"],
-            "c_wk": round(base["c_wk"] * noise, 2) if base["c_wk"] > 0 else base["c_wk"],
-            "ev_ebitda": round(base["ev_ebitda"] * noise, 2) if base["ev_ebitda"] > 0 else base["ev_ebitda"],
-            "dy": round(base["dy"] * (1.0 + random.uniform(-0.05, 0.05)), 2),
-            "price": round(base["price"] * noise, 2)
+            "c_z":      _apply_noise(base.get("c_z")),
+            "c_wk":     _apply_noise(base.get("c_wk")),
+            "ev_ebitda": _apply_noise(base.get("ev_ebitda")),
+            "dy": round((base.get("dy") or 0.0) * (1.0 + random.uniform(-0.05, 0.05)), 2),
+            "price": round((base.get("price") or 100.0) * noise, 2),
         }
 
     def get_indicators(self, ticker):
