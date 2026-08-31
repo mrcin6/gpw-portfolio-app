@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import re
 import tempfile
 import json
 import yfinance as yf
@@ -28,6 +29,65 @@ ENTRY_PRICES_PATH = os.path.join(BASE_DIR, "data", "entry_prices.json")
 
 # Create data directory if it doesn't exist
 os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
+
+
+def parse_erste_csv(file_obj):
+    """
+    Parses the Erste BM instrument CSV export (semicolon-delimited, Polish decimal comma).
+    Returns (holdings_list, entry_prices_dict, report_date_str, stocks_value).
+    Uses 'Prawa własności' as authoritative quantity (total owned, not just available to sell).
+    """
+    import io
+    raw = file_obj.read()
+    for enc in ("utf-8-sig", "utf-8", "cp1250", "iso-8859-2"):
+        try:
+            content = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            content = None
+    if content is None:
+        raise ValueError("Nie można odczytać pliku CSV — nieznane kodowanie.")
+
+    df = pd.read_csv(io.StringIO(content), sep=";", dtype=str)
+    df.columns = [c.strip() for c in df.columns]
+
+    def _num(val):
+        if pd.isna(val) or str(val).strip() in ("", "-", "nan"):
+            return None
+        return float(str(val).strip().replace("\xa0", "").replace(" ", "").replace(",", ".").replace("%", ""))
+
+    holdings = []
+    entry_prices = {}
+
+    for _, row in df.iterrows():
+        ticker = str(row.get("Walor", "")).strip()
+        if not ticker or ticker == "nan":
+            continue
+
+        qty_raw = _num(row.get("Prawa własności"))
+        qty = int(qty_raw) if qty_raw is not None else 0
+
+        price = _num(row.get("Kurs bieżący")) or 0.0
+        wycena = _num(row.get("Wycena"))
+        if wycena is None or wycena == 0:
+            wycena = round(qty * price, 2)
+
+        avg_price = _num(row.get("Średni kurs nabycia"))
+        isin = str(row.get("ISIN", "")).strip()
+
+        if qty > 0 and price > 0:
+            holdings.append({
+                "ticker": ticker,
+                "isin": isin,
+                "quantity": qty,
+                "price": price,
+                "valuation": wycena,
+            })
+            if avg_price and avg_price > 0:
+                entry_prices[ticker] = avg_price
+
+    stocks_value = sum(h["valuation"] for h in holdings)
+    return holdings, entry_prices, stocks_value
 
 
 def load_entry_prices():
@@ -748,78 +808,153 @@ with tab2:
 with tab3:
     st.header("📊 Wyniki Portfela (Erste BM)")
     
-    # 1. EXPANDER DO WGRYWANIA PDF
-    with st.expander("📥 Wgraj nowy raport kwartalny PDF lub wykaz instrumentów (Erste BM)"):
-        uploaded_file = st.file_uploader("Wybierz plik PDF wyciągu", type=["pdf"])
-        if uploaded_file is not None:
-            # Save uploaded file to temp path
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                tmp_file.write(uploaded_file.read())
-                tmp_path = tmp_file.name
-                
-            try:
-                with st.spinner("Przetwarzanie raportu PDF..."):
-                    parsed_data = parse_erste_pdf(tmp_path)
-                    
-                if parsed_data["report_date"] is not None:
-                    rep_date = parsed_data["report_date"]
-                    
-                    # 1. Update history
-                    df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
-                    df_history["Data"] = df_history["Data"].astype(str)
-                    
-                    val = parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"]
-                    
-                    new_row = {
-                        "Data": rep_date,
-                        "Wartość Całkowita (PLN)": val,
-                        "Wycena Akcji (PLN)": parsed_data["stocks_value"],
-                        "Gotówka (PLN)": parsed_data["cash_val"] if "cash_val" in parsed_data else parsed_data.get("cash_value", 0.0),
-                        "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
-                        "Zysk (PLN)": round(val - settings["total_deposits"], 2)
-                    }
-                    
-                    if rep_date in df_history["Data"].values:
-                        df_history.loc[df_history["Data"] == rep_date, ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]] = [
-                            new_row["Wartość Całkowita (PLN)"], new_row["Wycena Akcji (PLN)"], new_row["Gotówka (PLN)"], new_row["Wpłaty Skumulowane (PLN)"], new_row["Zysk (PLN)"]
-                        ]
-                        st.success(f"Zaktualizowano dane dla raportu z dnia: {rep_date}!")
+    # 1. WGRYWANIE DANYCH PORTFELA
+    with st.expander("📥 Wgraj nowy wykaz instrumentów lub raport PDF (Erste BM)"):
+        upload_tab_csv, upload_tab_pdf = st.tabs(["📄 CSV — Wykaz instrumentów (zalecane)", "📑 PDF — Raport kwartalny"])
+
+        # ── CSV UPLOADER (primary, privacy-safe) ──────────────────────────────
+        with upload_tab_csv:
+            st.markdown("""
+            <div class="note-card">
+              <div class="note-bar note-bar-info"></div>
+              <div class="note-body" style="font-size:12px;">
+                Wgraj plik <b>Instrumenty_finansowe_raport_*.csv</b> z Erste BM.<br>
+                CSV nie zawiera danych osobowych (PESEL, numer rachunku) — jest bezpieczny dla repozytorium.<br>
+                <b>Bonus:</b> kolumna <em>Średni kurs nabycia</em> zostanie automatycznie wczytana jako ceny wejścia w Tab 2.
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+            uploaded_csv = st.file_uploader("Wybierz plik CSV", type=["csv"], key="csv_uploader")
+            if uploaded_csv is not None:
+                try:
+                    with st.spinner("Przetwarzanie pliku CSV..."):
+                        holdings_csv, entry_prices_csv, stocks_val_csv = parse_erste_csv(uploaded_csv)
+
+                    if not holdings_csv:
+                        st.error("Nie znaleziono pozycji w pliku CSV. Sprawdź format pliku.")
                     else:
-                        df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
-                        df_history = df_history.sort_values(by="Data").reset_index(drop=True)
-                        st.success(f"Dodano nowy raport do historii z dnia: {rep_date}!")
-                        
-                    df_history.to_csv(HISTORY_PATH, index=False)
-                    
-                    # 2. Update current holdings if available
-                    if parsed_data["holdings"]:
-                        holdings_list = []
-                        total_stocks = parsed_data["stocks_value"] if parsed_data["stocks_value"] else sum(h['valuation'] for h in parsed_data["holdings"])
-                        if total_stocks == 0:
-                            total_stocks = 1.0
-                        for h in parsed_data["holdings"]:
-                            share = round((h["valuation"] / total_stocks) * 100, 2)
-                            holdings_list.append({
+                        # Extract date from filename: YYYY-MM-DD
+                        fname = uploaded_csv.name
+                        date_m = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
+                        rep_date_csv = date_m.group(1) if date_m else pd.Timestamp.today().strftime("%Y-%m-%d")
+
+                        # Update current_holdings.csv
+                        total_s = stocks_val_csv if stocks_val_csv else 1.0
+                        holdings_rows = []
+                        for h in sorted(holdings_csv, key=lambda x: -x["valuation"]):
+                            holdings_rows.append({
                                 "Spółka": h["ticker"],
                                 "Ilość": h["quantity"],
                                 "Kurs (PLN)": h["price"],
                                 "Wycena (PLN)": h["valuation"],
-                                "Udział (%)": share
+                                "Udział (%)": round(h["valuation"] / total_s * 100, 2),
                             })
-                        df_new_holdings = pd.DataFrame(holdings_list)
-                        df_new_holdings = df_new_holdings.sort_values(by="Wycena (PLN)", ascending=False).reset_index(drop=True)
-                        df_new_holdings.to_csv(HOLDINGS_PATH, index=False)
-                        st.success("Zaktualizowano aktualną strukturę portfela!")
-                    
-                    # Trigger rerun to show updated data
-                    st.rerun()
-                else:
-                    st.error("Nie udało się sparsować raportu. Upewnij się, że wgrywasz poprawny wyciąg z Erste BM.")
-            except Exception as e:
-                st.error(f"Wystąpił błąd podczas przetwarzania pliku PDF: {str(e)}")
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+                        pd.DataFrame(holdings_rows).to_csv(HOLDINGS_PATH, index=False)
+
+                        # Auto-populate entry_prices.json with Średni kurs nabycia
+                        if entry_prices_csv:
+                            save_entry_prices(entry_prices_csv)
+
+                        # Update portfolio_history.csv (stocks only — CSV has no cash info)
+                        df_hist = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
+                        df_hist["Data"] = df_hist["Data"].astype(str)
+                        new_hist_row = {
+                            "Data": rep_date_csv,
+                            "Wartość Całkowita (PLN)": stocks_val_csv,
+                            "Wycena Akcji (PLN)": stocks_val_csv,
+                            "Gotówka (PLN)": 0.0,
+                            "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
+                            "Zysk (PLN)": round(stocks_val_csv - settings["total_deposits"], 2),
+                        }
+                        if rep_date_csv in df_hist["Data"].values:
+                            for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
+                                df_hist.loc[df_hist["Data"] == rep_date_csv, col] = new_hist_row[col]
+                            st.success(f"Zaktualizowano dane dla dnia: {rep_date_csv}!")
+                        else:
+                            df_hist = pd.concat([df_hist, pd.DataFrame([new_hist_row])], ignore_index=True)
+                            df_hist = df_hist.sort_values(by="Data").reset_index(drop=True)
+                            st.success(f"Dodano dane do historii: {rep_date_csv} — {len(holdings_csv)} spółek, wycena akcji: {stocks_val_csv:,.2f} PLN.")
+                        df_hist.to_csv(HISTORY_PATH, index=False)
+
+                        ep_info = f" Wczytano {len(entry_prices_csv)} cen wejścia (Średni kurs nabycia)." if entry_prices_csv else ""
+                        st.success(f"Zaktualizowano portfel ({len(holdings_csv)} pozycji).{ep_info}")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Błąd przetwarzania CSV: {e}")
+
+        # ── PDF UPLOADER (fallback, privacy warning) ──────────────────────────
+        with upload_tab_pdf:
+            st.markdown("""
+            <div class="note-card">
+              <div class="note-bar note-bar-warn"></div>
+              <div class="note-body" style="font-size:12px;">
+                ⚠️ <b>Ostrzeżenie o prywatności:</b> Raporty PDF z Erste BM mogą zawierać
+                numer rachunku, PESEL i inne dane osobowe. Plik jest przetwarzany tylko lokalnie
+                i nie jest zapisywany — ale przy deploymencie na Streamlit Cloud przechodzi przez
+                ich serwery. <b>Zalecane jest używanie wyciągu CSV zamiast PDF.</b>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+            uploaded_file = st.file_uploader("Wybierz plik PDF wyciągu", type=["pdf"], key="pdf_uploader")
+            if uploaded_file is not None:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                    tmp_file.write(uploaded_file.read())
+                    tmp_path = tmp_file.name
+
+                try:
+                    with st.spinner("Przetwarzanie raportu PDF..."):
+                        parsed_data = parse_erste_pdf(tmp_path)
+
+                    if parsed_data["report_date"] is not None:
+                        rep_date = parsed_data["report_date"]
+
+                        df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
+                        df_history["Data"] = df_history["Data"].astype(str)
+
+                        val = parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"]
+
+                        new_row = {
+                            "Data": rep_date,
+                            "Wartość Całkowita (PLN)": val,
+                            "Wycena Akcji (PLN)": parsed_data["stocks_value"],
+                            "Gotówka (PLN)": parsed_data.get("cash_value", parsed_data.get("cash_val", 0.0)),
+                            "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
+                            "Zysk (PLN)": round(val - settings["total_deposits"], 2),
+                        }
+
+                        if rep_date in df_history["Data"].values:
+                            for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
+                                df_history.loc[df_history["Data"] == rep_date, col] = new_row[col]
+                            st.success(f"Zaktualizowano dane dla raportu z dnia: {rep_date}!")
+                        else:
+                            df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
+                            df_history = df_history.sort_values(by="Data").reset_index(drop=True)
+                            st.success(f"Dodano nowy raport do historii z dnia: {rep_date}!")
+
+                        df_history.to_csv(HISTORY_PATH, index=False)
+
+                        if parsed_data["holdings"]:
+                            holdings_list = []
+                            total_stocks = parsed_data["stocks_value"] or sum(h["valuation"] for h in parsed_data["holdings"]) or 1.0
+                            for h in parsed_data["holdings"]:
+                                holdings_list.append({
+                                    "Spółka": h["ticker"],
+                                    "Ilość": h["quantity"],
+                                    "Kurs (PLN)": h["price"],
+                                    "Wycena (PLN)": h["valuation"],
+                                    "Udział (%)": round((h["valuation"] / total_stocks) * 100, 2),
+                                })
+                            pd.DataFrame(holdings_list).sort_values(by="Wycena (PLN)", ascending=False).reset_index(drop=True).to_csv(HOLDINGS_PATH, index=False)
+                            st.success("Zaktualizowano aktualną strukturę portfela!")
+
+                        st.rerun()
+                    else:
+                        st.error("Nie udało się sparsować raportu. Upewnij się, że wgrywasz poprawny wyciąg z Erste BM.")
+                except Exception as e:
+                    st.error(f"Wystąpił błąd podczas przetwarzania pliku PDF: {str(e)}")
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
 
     # 2. KEY METRICS (KPIs)
     # Load history data to calculate KPIs

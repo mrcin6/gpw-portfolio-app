@@ -36,3 +36,10 @@ venv.bak/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Dane wrażliwe — nie commitować do repo
+# portfolio_settings.json przechowuje cookie sesji ASP.NET_SessionId
+data/portfolio_settings.json
+
+# Narzędzia deweloperskie (nie część aplikacji)
+.gemini/
