@@ -738,6 +738,37 @@ W słowniku `STATIC_FALLBACKS` dodaj minimalne dane awaryjne:
 **Krok 3 — zrestartuj aplikację** (Streamlit odświeży watchlistę automatycznie po restarcie).
 """)
 
+    # Warn about analysis time before button
+    _est_min = max(1, len(watchlist) // 10)
+    st.markdown(f"""
+    <div class="note-card">
+      <div class="note-bar note-bar-warn"></div>
+      <div class="note-body" style="font-size:12px;">
+        ⏱️ Analiza <b>{len(watchlist)} spółek</b> pobiera dane sekwencyjnie — szacowany czas: <b>{_est_min}–{_est_min*2} min</b>.
+        Uruchom przed sesją (np. o 8:00). Wyniki zapisują się w pamięci do czasu odświeżenia strony.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Warn if portfolio holds tickers not in watchlist
+    if os.path.exists(HOLDINGS_PATH):
+        try:
+            _df_hold_check = pd.read_csv(HOLDINGS_PATH)
+            _missing_from_wl = [t for t in _df_hold_check["Spółka"].tolist() if t not in watchlist]
+            if _missing_from_wl:
+                st.markdown(f"""
+                <div class="note-card">
+                  <div class="note-bar note-bar-warn"></div>
+                  <div class="note-body" style="font-size:12px;">
+                    ⚠️ Spółki w portfelu, których <b>nie ma na watchliście</b> (brak analizy w Tab 1):
+                    <b>{', '.join(_missing_from_wl)}</b>.<br>
+                    Dodaj je do <code>config/{selected_portfolio}_watchlist.json</code> i scraperów, aby objąć analizą.
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+        except Exception:
+            pass
+
     if st.button("🔄 Uruchom Analizę", use_container_width=True, type="primary"):
         with st.spinner("Pobieranie wskaźników..."):
             scraper = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
@@ -1021,6 +1052,20 @@ with tab2:
         risk_rows_html = ""
         entry_prices_for_risk = load_entry_prices()
         entry_sources_for_risk = load_entry_sources()
+        _no_entry_prices = not bool(entry_prices_for_risk)
+
+        if _no_entry_prices:
+            st.markdown("""
+            <div class="note-card">
+              <div class="note-bar note-bar-crit"></div>
+              <div class="note-body">
+                <b>Brak cen wejścia</b> — kolumna <em>Wynik (%)</em> liczy zmianę od bieżącego kursu
+                zamiast od rzeczywistej ceny zakupu. Wgraj CSV z kolumną <b>Średni kurs nabycia</b>
+                (Tab 3 → CSV) lub wpisz ręcznie w ekspanderze powyżej.
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         _src_label = {"csv": "Śr. nabycia", "manual": "Ręczna"}
         for _, r in df_strat.iterrows():
             ticker_name = r["Spółka"]
@@ -1043,7 +1088,11 @@ with tab2:
                          else "#2563eb" if "Yahoo" in src
                          else "#9ca3af")
 
-            if selected_portfolio == "ikze":
+            _is_dust = r["Udział Bieżący (%)"] < 0.1
+            if _is_dust:
+                badge = '<span style="background:#9ca3af;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128309; PYŁ &lt;0.1%</span>'
+                row_bg = "#f9fafb"
+            elif selected_portfolio == "ikze":
                 # IKE/IKZE: no SL/TP, quarterly review badges
                 if change_pct >= 50.0:
                     badge = '<span style="background:#7c3aed;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128200; PRZEJRZYJ +50%</span>'
@@ -1326,7 +1375,7 @@ with tab3:
             prev_val = prev_row["Wartość Całkowita (PLN)"]
             daily_change_pln = latest_val - prev_val
             daily_change_pct = (daily_change_pln / prev_val) * 100
-            daily_delta_str = f"{daily_change_pln:+.2f} zł ({daily_change_pct:+.2f}%) vs wczoraj"
+            daily_delta_str = f"{daily_change_pln:+.2f} zł ({daily_change_pct:+.2f}%) vs poprz. wgranie"
             daily_delta_class = "delta-plus" if daily_change_pln >= 0 else "delta-minus"
         else:
             daily_change_pln = 0.0
@@ -1347,10 +1396,10 @@ with tab3:
           <div class="metric-card wide">
             <div class="metric-title">Wycena Portfela ({latest_date})</div>
             <div class="metric-value">{latest_val:,.2f} PLN</div>
-            <div class="metric-delta {daily_delta_class}">Sesja: {daily_change_pln:+.2f} PLN</div>
+            <div class="metric-delta {daily_delta_class}">Zmiana: {daily_change_pln:+.2f} PLN vs poprz. wgranie</div>
           </div>
           <div class="metric-card" style="border-left-color:#27ae60;">
-            <div class="metric-title">Wynik Sesji</div>
+            <div class="metric-title">Zmiana od ost. wgrania</div>
             <div class="metric-value">{daily_change_pln:+.2f} PLN</div>
             <div class="metric-delta {daily_delta_class}">{daily_change_pct:+.2f}%</div>
           </div>
@@ -1365,9 +1414,9 @@ with tab3:
             <div class="metric-delta" style="color:#808080;">Kapitał zewnętrzny</div>
           </div>
           <div class="metric-card" style="border-left-color:#FF9F43;">
-            <div class="metric-title">Gotówka</div>
+            <div class="metric-title">Gotówka (wg CSV)</div>
             <div class="metric-value">{latest_cash:,.2f} PLN</div>
-            <div class="metric-delta" style="color:#808080;">Wolne środki</div>
+            <div class="metric-delta" style="color:#808080;">Wyciąg CSV nie zawiera salda</div>
           </div>
         </div>
         """, unsafe_allow_html=True)
