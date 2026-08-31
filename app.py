@@ -192,13 +192,25 @@ def load_entry_prices(path=None):
         try:
             with open(p, "r") as f:
                 data = json.load(f)
-            return {k: v for k, v in data.items() if v is not None and float(v) > 0}
+            return {k: float(v) for k, v in data.items()
+                    if not k.startswith("_") and v is not None and float(v) > 0}
         except Exception:
             return {}
     return {}
 
 
-def save_entry_prices(prices_dict, path=None):
+def load_entry_sources(path=None):
+    p = path or ENTRY_PRICES_PATH
+    if os.path.exists(p):
+        try:
+            with open(p, "r") as f:
+                return json.load(f).get("_src", {})
+        except Exception:
+            return {}
+    return {}
+
+
+def save_entry_prices(prices_dict, path=None, source=None):
     p = path or ENTRY_PRICES_PATH
     existing = {}
     if os.path.exists(p):
@@ -208,6 +220,11 @@ def save_entry_prices(prices_dict, path=None):
         except Exception:
             pass
     existing.update(prices_dict)
+    if source:
+        _src = existing.get("_src", {})
+        for ticker in prices_dict:
+            _src[ticker] = source
+        existing["_src"] = _src
     with open(p, "w") as f:
         json.dump(existing, f, indent=2)
 
@@ -791,7 +808,7 @@ with tab2:
                         key=f"ep_{ticker}"
                     )
             if st.button("💾 Zapisz Ceny Wejścia", use_container_width=True):
-                save_entry_prices(ep_inputs)
+                save_entry_prices(ep_inputs, source="manual")
                 st.success("Ceny wejścia zapisane!")
                 st.rerun()
 
@@ -905,16 +922,19 @@ with tab2:
 
         risk_rows_html = ""
         entry_prices_for_risk = load_entry_prices()
+        entry_sources_for_risk = load_entry_sources()
+        _src_label = {"csv": "Śr. nabycia", "manual": "Ręczna"}
         for _, r in df_strat.iterrows():
             ticker_name = r["Spółka"]
             pdf_price = r["Kurs (PLN)"]
-            manual_price = entry_prices_for_risk.get(ticker_name)
-            if manual_price and float(manual_price) > 0:
-                purchase = float(manual_price)
-                purchase_source = "Ręczna"
+            entry_val = entry_prices_for_risk.get(ticker_name)
+            if entry_val and float(entry_val) > 0:
+                purchase = float(entry_val)
+                _raw_src = entry_sources_for_risk.get(ticker_name, "manual")
+                purchase_source = _src_label.get(_raw_src, "Ręczna")
             else:
                 purchase = float(pdf_price)
-                purchase_source = "PDF"
+                purchase_source = "Bieżący"
             current = r["Kurs Bieżący (PLN)"]
             change_pct = ((current - purchase) / purchase) * 100 if purchase > 0 else 0.0
             change_str = f"{change_pct:+.2f}%"
@@ -948,7 +968,9 @@ with tab2:
                     row_bg = "#ffffff"
 
             src_badge = f'<span style="border:1.5px solid {src_color};color:{src_color};padding:1px 6px;border-radius:4px;font-size:9px;font-weight:700;">{src.split("(")[0].strip() or "PDF"}</span>'
-            ep_badge_color = "#6b7280" if purchase_source == "PDF" else "#7c3aed"
+            ep_badge_color = ("#16a34a" if purchase_source == "Śr. nabycia"
+                              else "#7c3aed" if purchase_source == "Ręczna"
+                              else "#9ca3af")
             ep_badge = f'<span style="border:1.5px solid {ep_badge_color};color:{ep_badge_color};padding:1px 6px;border-radius:4px;font-size:9px;font-weight:700;">{purchase_source}</span>'
 
             risk_rows_html += f"""
@@ -1079,7 +1101,7 @@ with tab3:
 
                         # Auto-populate entry_prices.json with Średni kurs nabycia
                         if entry_prices_csv:
-                            save_entry_prices(entry_prices_csv)
+                            save_entry_prices(entry_prices_csv, source="csv")
 
                         # Update portfolio_history.csv (stocks only — CSV has no cash info)
                         df_hist = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
