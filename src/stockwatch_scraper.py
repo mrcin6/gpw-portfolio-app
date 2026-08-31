@@ -203,6 +203,24 @@ class StockwatchScraper:
             logger.error(f"Error fetching Yahoo Finance fallback for {ticker}: {str(e)}")
             return None
 
+    def fetch_live_price_biznesradar(self, ticker):
+        """Fetches real-time price from Biznesradar notowania page (span.q_ch_act)"""
+        url = f"https://www.biznesradar.pl/notowania/{ticker}"
+        try:
+            r = self.session.get(url, headers=self.headers, timeout=10)
+            if r.status_code != 200:
+                return None
+            soup = BeautifulSoup(r.text, "html.parser")
+            el = soup.find("span", class_="q_ch_act")
+            if el:
+                raw = el.get_text(strip=True).replace("\xa0", "").replace(" ", "")
+                m = re.match(r"^-?[\d]+(?:[,.][\d]+)?", raw)
+                if m:
+                    return round(float(m.group().replace(",", ".")), 2)
+        except Exception as e:
+            logger.error(f"Biznesradar live price fetch error for {ticker}: {e}")
+        return None
+
     def fetch_biznesradar(self, ticker):
         """Level-2 fallback: scrapes fundamental ratios and price from Biznesradar.pl"""
         url = f"https://www.biznesradar.pl/wskazniki-wartosci-rynkowej/{ticker}"
@@ -213,7 +231,6 @@ class StockwatchScraper:
             soup = BeautifulSoup(r.text, "html.parser")
 
             label_map = {
-                "Kurs": "price",
                 "Cena / Zysk": "c_z",
                 "Cena / Wartość księgowa": "c_wk",
                 "EV / EBITDA": "ev_ebitda",
@@ -245,13 +262,15 @@ class StockwatchScraper:
             if not result.get("c_z") and not result.get("c_wk") and not result.get("ev_ebitda"):
                 return None
 
-            # DY and live price from yfinance (Biznesradar wskazniki Kurs = quarterly snapshot, not live)
+            # DY from yfinance; live price: prefer yfinance → Biznesradar notowania → None
             yfin_data = self.fetch_yfinance_fallback(ticker)
             result["dy"] = yfin_data.get("dy", 0.0) if yfin_data else 0.0
-            # Prefer yfinance live price; keep Biznesradar kurs only when yfinance has no data
             if yfin_data and yfin_data.get("price"):
                 result["price"] = yfin_data["price"]
-            # else: result["price"] already set from Biznesradar Kurs row (small-cap fallback)
+            else:
+                # yfinance unavailable for this ticker — fetch live price from notowania page
+                live_price = self.fetch_live_price_biznesradar(ticker)
+                result["price"] = live_price  # may be None, caller will handle
 
             for field in ["c_z", "c_wk", "ev_ebitda", "dy", "price"]:
                 result.setdefault(field, None)
@@ -307,6 +326,10 @@ class StockwatchScraper:
 
         # Level 4: Static Pre-programmed Fallback (no recommendations shown)
         mock_data = self.fetch_mock_fallback(ticker)
+        # Even in L4, try to get a real live price so the Strategy tab shows correct values
+        live_price = self.fetch_live_price_biznesradar(ticker)
+        if live_price:
+            mock_data["price"] = live_price
         mock_data["source"] = "Lokalna Baza Danych (L4)"
         mock_data["status"] = "Fallback (Offline)"
         return mock_data

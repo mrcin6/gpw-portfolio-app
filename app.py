@@ -24,9 +24,34 @@ HISTORY_PATH = os.path.join(BASE_DIR, "data", "portfolio_history.csv")
 HOLDINGS_PATH = os.path.join(BASE_DIR, "data", "current_holdings.csv")
 SETTINGS_PATH = os.path.join(BASE_DIR, "data", "portfolio_settings.json")
 DEPOSIT_HISTORY_PATH = os.path.join(BASE_DIR, "data", "deposit_history.json")
+ENTRY_PRICES_PATH = os.path.join(BASE_DIR, "data", "entry_prices.json")
 
 # Create data directory if it doesn't exist
 os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
+
+
+def load_entry_prices():
+    if os.path.exists(ENTRY_PRICES_PATH):
+        try:
+            with open(ENTRY_PRICES_PATH, "r") as f:
+                data = json.load(f)
+            return {k: v for k, v in data.items() if v is not None and float(v) > 0}
+        except Exception:
+            return {}
+    return {}
+
+
+def save_entry_prices(prices_dict):
+    existing = {}
+    if os.path.exists(ENTRY_PRICES_PATH):
+        try:
+            with open(ENTRY_PRICES_PATH, "r") as f:
+                existing = json.load(f)
+        except Exception:
+            pass
+    existing.update(prices_dict)
+    with open(ENTRY_PRICES_PATH, "w") as f:
+        json.dump(existing, f, indent=2)
 
 # Load settings for cumulative external deposits and Stockwatch session
 if os.path.exists(SETTINGS_PATH):
@@ -313,11 +338,12 @@ if new_phpsessid != settings.get("phpsessid", ""):
 ALERTS_PATH = os.path.join(BASE_DIR, "data", "stockwatch_alerts.json")
 
 # TAB NAVIGATION
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "☀️ Rekomendacje 8:00",
     "🎯 Strategia",
     "📊 Wyniki i Portfel",
     "🔔 Alerty Stockwatch",
+    "💰 Inwestuj",
 ])
 
 # ==========================================
@@ -520,6 +546,30 @@ with tab2:
           </div>
         </div>
         """, unsafe_allow_html=True)
+
+        # Entry price editor
+        entry_prices_saved = load_entry_prices()
+        with st.expander("✏️ Edytuj Ceny Wejścia (rzeczywiste ceny zakupu)"):
+            st.markdown("Wpisz rzeczywiste ceny zakupu dla każdej pozycji. Zostaną użyte w obliczeniach Stop-Loss / Take-Profit zamiast cen z PDF.")
+            ep_cols = st.columns(3)
+            ep_inputs = {}
+            for i, (_, row) in enumerate(df_holdings.iterrows()):
+                ticker = row["Spółka"]
+                default_val = entry_prices_saved.get(ticker, row["Kurs (PLN)"])
+                with ep_cols[i % 3]:
+                    ep_inputs[ticker] = st.number_input(
+                        f"{ticker} ({int(row['Ilość'])} szt.)",
+                        min_value=0.01,
+                        value=float(default_val),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"ep_{ticker}"
+                    )
+            if st.button("💾 Zapisz Ceny Wejścia", use_container_width=True):
+                save_entry_prices(ep_inputs)
+                st.success("Ceny wejścia zapisane!")
+                st.rerun()
+
         if st.button("🔄 Odśwież Kursy", use_container_width=True):
             with st.spinner("Pobieranie aktualnych notowań (Stockwatch → Biznesradar → Yahoo)..."):
                 scraper_strat = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
@@ -616,13 +666,22 @@ with tab2:
         st.markdown('<div class="uxr-subheader"><div class="uxr-subheader-bar"></div><div class="uxr-subheader-text">&#128721; Monitor Ryzyka (Stop-Loss &amp; Take-Profit)</div></div>', unsafe_allow_html=True)
 
         risk_rows_html = ""
+        entry_prices_for_risk = load_entry_prices()
         for _, r in df_strat.iterrows():
-            purchase = r["Kurs (PLN)"]
+            ticker_name = r["Spółka"]
+            pdf_price = r["Kurs (PLN)"]
+            manual_price = entry_prices_for_risk.get(ticker_name)
+            if manual_price and float(manual_price) > 0:
+                purchase = float(manual_price)
+                purchase_source = "Ręczna"
+            else:
+                purchase = float(pdf_price)
+                purchase_source = "PDF"
             current = r["Kurs Bieżący (PLN)"]
             change_pct = ((current - purchase) / purchase) * 100 if purchase > 0 else 0.0
             change_str = f"{change_pct:+.2f}%"
             change_color = "#16a34a" if change_pct >= 0 else "#dc2626"
-            src = st.session_state.get("live_sources", {}).get(r["Spółka"], "")
+            src = st.session_state.get("live_sources", {}).get(ticker_name, "")
             src_color = ("#7c3aed" if "Premium" in src
                          else "#16a34a" if "Biznesradar" in src
                          else "#2563eb" if "Yahoo" in src
@@ -639,12 +698,14 @@ with tab2:
                 row_bg = "#ffffff"
 
             src_badge = f'<span style="border:1.5px solid {src_color};color:{src_color};padding:1px 6px;border-radius:4px;font-size:9px;font-weight:700;">{src.split("(")[0].strip() or "PDF"}</span>'
+            ep_badge_color = "#6b7280" if purchase_source == "PDF" else "#7c3aed"
+            ep_badge = f'<span style="border:1.5px solid {ep_badge_color};color:{ep_badge_color};padding:1px 6px;border-radius:4px;font-size:9px;font-weight:700;">{purchase_source}</span>'
 
             risk_rows_html += f"""
             <tr style="background:{row_bg};">
-                <td class="td-company">{r['Spółka']}</td>
+                <td class="td-company">{ticker_name}</td>
                 <td class="td-num">{int(r['Ilość']):,}</td>
-                <td class="td-num">{purchase:,.2f} zł</td>
+                <td class="td-num">{purchase:,.2f} zł {ep_badge}</td>
                 <td class="td-num td-bold">{current:,.2f} zł</td>
                 <td style="padding:10px 12px;font-size:14px;font-weight:700;color:{change_color};">{change_str}</td>
                 <td class="td-center">{badge}</td>
@@ -1123,3 +1184,272 @@ with tab4:
                 with open(ALERTS_PATH, "w", encoding="utf-8") as f:
                     json.dump(alerts_state, f)
                 st.rerun()
+
+# ==========================================
+# TAB 5: REKOMENDACJA NOWYCH INWESTYCJI
+# ==========================================
+
+def _comp_scores(c_z, c_wk, ev_ebitda, dy):
+    """Replicates the component scoring from StockwatchScraper.calculate_score."""
+    if c_z is None:
+        s_cz = 50.0
+    elif c_z < 0:
+        s_cz = 0.0
+    elif c_z < 5:
+        s_cz = 50.0
+    elif c_z <= 12:
+        s_cz = 100.0
+    elif c_z <= 20:
+        s_cz = 70.0
+    elif c_z <= 35:
+        s_cz = 40.0
+    else:
+        s_cz = 10.0
+
+    if c_wk is None:
+        s_cwk = 50.0
+    elif c_wk < 0:
+        s_cwk = 0.0
+    elif c_wk <= 1.0:
+        s_cwk = 100.0
+    elif c_wk <= 2.5:
+        s_cwk = 80.0
+    elif c_wk <= 4.0:
+        s_cwk = 50.0
+    else:
+        s_cwk = 20.0
+
+    if ev_ebitda is None:
+        s_ev = 50.0
+    elif ev_ebitda < 0:
+        s_ev = 0.0
+    elif ev_ebitda <= 6.0:
+        s_ev = 100.0
+    elif ev_ebitda <= 11.0:
+        s_ev = 75.0
+    elif ev_ebitda <= 16.0:
+        s_ev = 40.0
+    else:
+        s_ev = 15.0
+
+    if not dy or dy == 0.0:
+        s_dy = 0.0
+    elif dy < 2.0:
+        s_dy = 30.0
+    elif dy < 5.0:
+        s_dy = 70.0
+    elif dy <= 10.0:
+        s_dy = 100.0
+    else:
+        s_dy = 80.0
+
+    return s_cz, s_cwk, s_ev, s_dy
+
+
+def _horizon_score(item, horizon_label):
+    s_cz, s_cwk, s_ev, s_dy = _comp_scores(
+        item.get("c_z"), item.get("c_wk"), item.get("ev_ebitda"), item.get("dy")
+    )
+    trend = float(item.get("trend_score") or 70)
+    if "3" in horizon_label:
+        return round(0.15 * s_cz + 0.10 * s_cwk + 0.10 * s_ev + 0.05 * s_dy + 0.60 * trend, 1)
+    elif "12" in horizon_label:
+        return round(0.25 * s_cz + 0.25 * s_cwk + 0.15 * s_ev + 0.20 * s_dy + 0.15 * trend, 1)
+    else:
+        return float(item.get("score", 50))
+
+
+def _build_rationale(item, horizon_label):
+    parts = []
+    c_z = item.get("c_z")
+    c_wk = item.get("c_wk")
+    dy = item.get("dy")
+    trend = item.get("trend_score", 70)
+    if c_z is not None and 5 <= c_z <= 20:
+        parts.append(f"Atrakcyjna wycena C/Z = {c_z:.1f}")
+    if c_wk is not None and c_wk <= 2.5:
+        parts.append(f"C/WK = {c_wk:.2f} (niedowartościowane względem księgowej)")
+    if dy and dy >= 2.0:
+        parts.append(f"Dywidenda {dy:.1f}% rocznie")
+    if trend >= 75:
+        parts.append("Trend wzrostowy powyżej SMA50")
+    if "3" in horizon_label:
+        parts.append("Krótki horyzont: priorytet impulsu cenowego")
+    elif "12" in horizon_label:
+        parts.append("Długi horyzont: solidne fundamenty i dywidenda")
+    return " · ".join(parts) if parts else "Ogólna atrakcyjność wg modelu punktowego"
+
+
+with tab5:
+    st.header("💰 Rekomendacja Nowych Inwestycji")
+    st.markdown("Analiza, w co i dlaczego warto zainwestować nowy kapitał. Uwzględnia bieżące wagi portfela i nie rekomenduje spółek przekraczających limit 15%.")
+
+    col_a1, col_a2 = st.columns(2)
+    with col_a1:
+        invest_amount = st.selectbox("Kwota inwestycji", [1000, 2000, 5000], format_func=lambda x: f"{x:,} PLN")
+    with col_a2:
+        invest_horizon = st.selectbox("Horyzont inwestycji", ["3 miesiące (krótki)", "6 miesięcy (średni)", "12 miesięcy (długi)"])
+
+    if st.button("🔍 Analizuj i Doradź", type="primary", use_container_width=True):
+        recom_data = st.session_state.get("recommendations_data")
+        if not recom_data:
+            with st.spinner("Pobieranie danych z Biznesradar / Yahoo Finance..."):
+                scraper_inv = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
+                wl_path = os.path.join(BASE_DIR, "config", "watchlist.json")
+                with open(wl_path, "r") as _f:
+                    wl_inv = json.load(_f)
+                recom_data = []
+                for _ticker in wl_inv:
+                    _ind = scraper_inv.get_indicators(_ticker)
+                    _trend = scraper_inv.get_technical_trend(_ticker)
+                    _score = scraper_inv.calculate_score(_ind, _trend)
+                    _recom = scraper_inv.get_recommendation(_score)
+                    recom_data.append({
+                        "ticker": _ticker,
+                        "c_z": _ind.get("c_z"),
+                        "c_wk": _ind.get("c_wk"),
+                        "ev_ebitda": _ind.get("ev_ebitda"),
+                        "dy": _ind.get("dy"),
+                        "price": _ind.get("price"),
+                        "trend_score": _trend,
+                        "score": _score,
+                        "action": _recom["action"],
+                        "color": _recom["color"],
+                        "text_color": _recom["text_color"],
+                        "source": _ind.get("source", ""),
+                    })
+                st.session_state["recommendations_data"] = recom_data
+
+        # Current portfolio allocation
+        if os.path.exists(HOLDINGS_PATH):
+            _df_h = pd.read_csv(HOLDINGS_PATH)
+            _live = st.session_state.get("live_prices", {})
+            _vals = {}
+            for _, _row in _df_h.iterrows():
+                _p = float(_live.get(_row["Spółka"], _row["Kurs (PLN)"]))
+                _vals[_row["Spółka"]] = int(_row["Ilość"]) * _p
+            _total_val = sum(_vals.values()) or 1.0
+            _current_alloc_pct = {t: v / _total_val * 100 for t, v in _vals.items()}
+        else:
+            _current_alloc_pct = {}
+            _total_val = 100000.0
+
+        # Score candidates
+        candidates = []
+        for item in recom_data:
+            score_adj = _horizon_score(item, invest_horizon)
+            cur_pct = _current_alloc_pct.get(item["ticker"], 0.0)
+            price = float(item.get("price") or 0)
+            if score_adj < 55 or cur_pct >= 14.0 or price <= 0:
+                continue
+            candidates.append({**item, "score_adj": score_adj, "current_pct": cur_pct, "price": price})
+
+        candidates.sort(key=lambda x: x["score_adj"], reverse=True)
+        top3 = candidates[:3]
+
+        if not top3:
+            st.warning("Brak kandydatów spełniających kryteria. Uruchom analizę w Tab 1 lub zmień horyzont.")
+        else:
+            total_score_sum = sum(c["score_adj"] for c in top3) or 1.0
+            for c in top3:
+                c["alloc_pln"] = invest_amount * (c["score_adj"] / total_score_sum)
+                c["shares"] = int(c["alloc_pln"] / c["price"])
+                c["actual_pln"] = c["shares"] * c["price"]
+                c["new_pct"] = c["current_pct"] + (c["actual_pln"] / _total_val * 100)
+                c["rationale"] = _build_rationale(c, invest_horizon)
+
+            st.session_state["invest_result"] = {
+                "amount": invest_amount,
+                "horizon": invest_horizon,
+                "candidates": top3,
+                "total_val": _total_val,
+            }
+            st.rerun()
+
+    if "invest_result" in st.session_state:
+        res = st.session_state["invest_result"]
+        candidates_res = res["candidates"]
+        total_val_res = res["total_val"]
+
+        st.markdown(f"""
+        <div class="note-card">
+          <div class="note-bar note-bar-info"></div>
+          <div class="note-body" style="font-size:12px;">
+            <b>Kwota:</b> {res['amount']:,} PLN &nbsp;|&nbsp; <b>Horyzont:</b> {res['horizon']} &nbsp;|&nbsp;
+            <b>Kandydaci:</b> {len(candidates_res)} spółek
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown('<div class="uxr-subheader"><div class="uxr-subheader-bar"></div><div class="uxr-subheader-text">🏆 Top Rekomendacje</div></div>', unsafe_allow_html=True)
+
+        for rank, c in enumerate(candidates_res, 1):
+            action_color = c.get("color", "#FFC107")
+            action_text_color = c.get("text_color", "#212529")
+            action_label = c.get("action", "TRZYMAJ")
+            score_adj = c["score_adj"]
+            price = c["price"]
+            shares = c["shares"]
+            actual_pln = c["actual_pln"]
+            new_pct = c["new_pct"]
+            cur_pct = c["current_pct"]
+            rationale = c["rationale"]
+            ticker = c["ticker"]
+
+            medal = ["🥇", "🥈", "🥉"][rank - 1]
+
+            dy_str = f"{c['dy']:.1f}%" if c.get("dy") else "—"
+            cz_str = f"{c['c_z']:.1f}" if c.get("c_z") else "—"
+            cwk_str = f"{c['c_wk']:.2f}" if c.get("c_wk") else "—"
+
+            st.markdown(f"""
+            <div class="note-card" style="margin-bottom:16px;">
+              <div class="note-bar" style="background:{action_color};"></div>
+              <div class="note-body">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+                  <div>
+                    <span style="font-size:22px;font-weight:700;color:#131f33;">{medal} {ticker}</span>
+                    &nbsp;
+                    <span style="background:{action_color};color:{action_text_color};padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;">{action_label}</span>
+                  </div>
+                  <div style="text-align:right;">
+                    <span style="font-size:20px;font-weight:700;color:#131f33;">{actual_pln:,.2f} zł</span>
+                    <span style="font-size:13px;color:#666;margin-left:6px;">({shares} szt. × {price:,.2f} zł)</span>
+                  </div>
+                </div>
+                <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:13px;margin-bottom:10px;">
+                  <div><span style="color:#666;">Score (horyzont):</span> <b style="color:#131f33;">{score_adj:.1f}/100</b></div>
+                  <div><span style="color:#666;">C/Z:</span> <b>{cz_str}</b></div>
+                  <div><span style="color:#666;">C/WK:</span> <b>{cwk_str}</b></div>
+                  <div><span style="color:#666;">DY:</span> <b>{dy_str}</b></div>
+                  <div><span style="color:#666;">Udział przed:</span> <b>{cur_pct:.1f}%</b></div>
+                  <div><span style="color:#{'dc2626' if new_pct > 12 else '16a34a'};">Udział po:</span> <b>{new_pct:.1f}%</b></div>
+                </div>
+                <div style="font-size:12px;color:#444;border-top:1px solid #f0f0f0;padding-top:8px;">
+                  💡 {rationale}
+                </div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Summary table
+        with st.expander("📋 Podsumowanie alokacji nowego kapitału"):
+            summary_rows = []
+            total_actual = sum(c["actual_pln"] for c in candidates_res)
+            leftover = res["amount"] - total_actual
+            for c in candidates_res:
+                summary_rows.append({
+                    "Spółka": c["ticker"],
+                    "Akcji": c["shares"],
+                    "Cena (PLN)": f"{c['price']:,.2f}",
+                    "Koszt (PLN)": f"{c['actual_pln']:,.2f}",
+                    "Udział po (%)": f"{c['new_pct']:.1f}%",
+                    "Score": c["score_adj"],
+                })
+            df_summary = pd.DataFrame(summary_rows)
+            st.dataframe(df_summary, use_container_width=True, hide_index=True)
+            st.markdown(f"**Łączny koszt:** {total_actual:,.2f} PLN &nbsp;|&nbsp; **Reszta:** {leftover:,.2f} PLN (zostaje na rachunku)")
+
+        if st.button("🔄 Wyczyść wynik i analizuj ponownie"):
+            del st.session_state["invest_result"]
+            st.rerun()
