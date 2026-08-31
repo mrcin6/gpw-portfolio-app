@@ -19,16 +19,112 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Resolve paths dynamically
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HISTORY_PATH = os.path.join(BASE_DIR, "data", "portfolio_history.csv")
-HOLDINGS_PATH = os.path.join(BASE_DIR, "data", "current_holdings.csv")
-SETTINGS_PATH = os.path.join(BASE_DIR, "data", "portfolio_settings.json")
-DEPOSIT_HISTORY_PATH = os.path.join(BASE_DIR, "data", "deposit_history.json")
-ENTRY_PRICES_PATH = os.path.join(BASE_DIR, "data", "entry_prices.json")
 
-# Create data directory if it doesn't exist
-os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
+PORTFOLIO_NAMES = {
+    "erste": "📈 Erste — Wartościowa",
+    "ing":   "🏦 ING — Wartościowa",
+    "ikze":  "🔒 IKE/IKZE — Wzrostowa",
+}
+
+SCORE_WEIGHTS = {
+    "erste": {"cz": 0.30, "cwk": 0.20, "ev": 0.20, "dy": 0.10, "trend": 0.20},
+    "ing":   {"cz": 0.30, "cwk": 0.20, "ev": 0.20, "dy": 0.10, "trend": 0.20},
+    "ikze":  {"cz": 0.15, "cwk": 0.10, "ev": 0.30, "dy": 0.00, "trend": 0.45},
+}
+
+ETF_TICKERS = {"ETFBSPXPL", "ETFBW20TR"}
+
+
+def get_paths(portfolio: str) -> dict:
+    base = os.path.join(BASE_DIR, "data", portfolio)
+    os.makedirs(base, exist_ok=True)
+    return {
+        "holdings":  os.path.join(base, "current_holdings.csv"),
+        "history":   os.path.join(base, "portfolio_history.csv"),
+        "entry":     os.path.join(base, "entry_prices.json"),
+        "deposits":  os.path.join(base, "deposit_history.json"),
+        "settings":  os.path.join(base, "portfolio_settings.json"),
+        "alerts":    os.path.join(base, "stockwatch_alerts.json"),
+        "watchlist": os.path.join(BASE_DIR, "config", f"{portfolio}_watchlist.json"),
+    }
+
+
+def load_settings(settings_path: str) -> dict:
+    defaults = {"total_deposits": 0.0, "phpsessid": "", "strategy": "value"}
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r") as f:
+                data = json.load(f)
+            for k, v in defaults.items():
+                if k not in data:
+                    data[k] = v
+            return data
+        except Exception:
+            pass
+    with open(settings_path, "w") as f:
+        json.dump(defaults, f, indent=2)
+    return defaults.copy()
+
+
+def calculate_portfolio_score(indicators: dict, trend_score: float, portfolio: str) -> float:
+    """Score with per-portfolio weights, reusing _comp_scores logic inline."""
+    w = SCORE_WEIGHTS.get(portfolio, SCORE_WEIGHTS["erste"])
+    c_z = indicators.get("c_z")
+    c_wk = indicators.get("c_wk")
+    ev = indicators.get("ev_ebitda")
+    dy = indicators.get("dy", 0.0) or 0.0
+
+    def _s_cz(v):
+        if v is None: return 50.0
+        if v < 0: return 0.0
+        if v < 5: return 50.0
+        if v <= 12: return 100.0
+        if v <= 20: return 70.0
+        if v <= 35: return 40.0
+        return 10.0
+
+    def _s_cwk(v):
+        if v is None: return 50.0
+        if v < 0: return 0.0
+        if v <= 1.0: return 100.0
+        if v <= 2.5: return 80.0
+        if v <= 4.0: return 50.0
+        return 20.0
+
+    def _s_ev(v):
+        if v is None: return 50.0
+        if v < 0: return 0.0
+        if v <= 6.0: return 100.0
+        if v <= 11.0: return 75.0
+        if v <= 16.0: return 40.0
+        return 15.0
+
+    def _s_dy(v):
+        if not v or v == 0.0: return 0.0
+        if v < 2.0: return 30.0
+        if v < 5.0: return 70.0
+        if v <= 10.0: return 100.0
+        return 80.0
+
+    score = (w["cz"] * _s_cz(c_z) + w["cwk"] * _s_cwk(c_wk) +
+             w["ev"] * _s_ev(ev) + w["dy"] * _s_dy(dy) +
+             w["trend"] * float(trend_score or 70))
+    return round(score, 1)
+
+
+# Determine active portfolio from session_state (default: erste)
+_active_portfolio = st.session_state.get("active_portfolio", "erste")
+_paths = get_paths(_active_portfolio)
+
+# Backward-compatible path constants — reassigned per active portfolio
+HOLDINGS_PATH      = _paths["holdings"]
+HISTORY_PATH       = _paths["history"]
+SETTINGS_PATH      = _paths["settings"]
+ENTRY_PRICES_PATH  = _paths["entry"]
+DEPOSIT_HISTORY_PATH = _paths["deposits"]
+
+os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
 
 def parse_erste_csv(file_obj):
@@ -90,10 +186,11 @@ def parse_erste_csv(file_obj):
     return holdings, entry_prices, stocks_value
 
 
-def load_entry_prices():
-    if os.path.exists(ENTRY_PRICES_PATH):
+def load_entry_prices(path=None):
+    p = path or ENTRY_PRICES_PATH
+    if os.path.exists(p):
         try:
-            with open(ENTRY_PRICES_PATH, "r") as f:
+            with open(p, "r") as f:
                 data = json.load(f)
             return {k: v for k, v in data.items() if v is not None and float(v) > 0}
         except Exception:
@@ -101,32 +198,20 @@ def load_entry_prices():
     return {}
 
 
-def save_entry_prices(prices_dict):
+def save_entry_prices(prices_dict, path=None):
+    p = path or ENTRY_PRICES_PATH
     existing = {}
-    if os.path.exists(ENTRY_PRICES_PATH):
+    if os.path.exists(p):
         try:
-            with open(ENTRY_PRICES_PATH, "r") as f:
+            with open(p, "r") as f:
                 existing = json.load(f)
         except Exception:
             pass
     existing.update(prices_dict)
-    with open(ENTRY_PRICES_PATH, "w") as f:
+    with open(p, "w") as f:
         json.dump(existing, f, indent=2)
 
-# Load settings for cumulative external deposits and Stockwatch session
-if os.path.exists(SETTINGS_PATH):
-    try:
-        with open(SETTINGS_PATH, "r") as f:
-            settings = json.load(f)
-    except Exception:
-        settings = {"total_deposits": 107466.94, "phpsessid": ""}
-else:
-    settings = {"total_deposits": 107466.94, "phpsessid": ""}
-    with open(SETTINGS_PATH, "w") as f:
-        json.dump(settings, f)
-
-if "phpsessid" not in settings:
-    settings["phpsessid"] = ""
+settings = load_settings(SETTINGS_PATH)
 
 # UXR / CXR Design System — Poppins + Navy + Neon — Mobile First
 st.markdown("""
@@ -340,25 +425,39 @@ st.markdown("""
 st.title("📈 GPW Smart Assistant")
 
 # ==========================================
-# SIDEBAR - PORTFOLIO CONFIGURATION
+# SIDEBAR - PORTFOLIO SELECTOR + CONFIG
 # ==========================================
-st.sidebar.header("⚙️ Zarządzanie Kapitałem")
-st.sidebar.markdown("Ustawienia wpłat zewnętrznych w celu wyliczenia **realnego zysku organicznego** (bez wpływu dopłat środków).")
+st.sidebar.header("⚙️ Portfele")
 
-new_total_deposits = st.sidebar.number_input(
-    "Suma wpłat zewnętrznych (PLN)",
-    value=float(settings["total_deposits"]),
-    step=500.0,
-    help="Wpisz sumę wszystkich fizycznych wpłat na konto maklerskie z zewnątrz. Zysk będzie wyliczany jako: Wartość Portfela - Suma Wpłat.",
-    format="%.2f"
+selected_portfolio = st.sidebar.selectbox(
+    "Aktywny portfel",
+    list(PORTFOLIO_NAMES.keys()),
+    format_func=lambda k: PORTFOLIO_NAMES[k],
+    key="active_portfolio",
 )
 
-# Save settings and dynamically recalculate latest profit if deposits changed
+# If portfolio changed, re-run immediately so path constants update
+if selected_portfolio != _active_portfolio:
+    st.rerun()
+
+ALERTS_PATH = _paths["alerts"]
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Suma wpłat zewnętrznych (PLN)**")
+st.sidebar.markdown("<div style='font-size:11px;color:rgba(255,255,255,0.55);'>Zysk = Wartość Portfela − Suma Wpłat</div>", unsafe_allow_html=True)
+
+new_total_deposits = st.sidebar.number_input(
+    "Wpłaty łącznie (PLN)",
+    value=float(settings["total_deposits"]),
+    step=500.0,
+    format="%.2f",
+    label_visibility="collapsed",
+)
+
 if new_total_deposits != settings["total_deposits"]:
     settings["total_deposits"] = new_total_deposits
     with open(SETTINGS_PATH, "w") as f:
-        json.dump(settings, f)
-    
+        json.dump(settings, f, indent=2)
     if os.path.exists(HISTORY_PATH):
         df_hist = pd.read_csv(HISTORY_PATH)
         if not df_hist.empty:
@@ -366,7 +465,6 @@ if new_total_deposits != settings["total_deposits"]:
             latest_val = df_hist.iloc[-1]["Wartość Całkowita (PLN)"]
             df_hist.iloc[-1, df_hist.columns.get_loc("Zysk (PLN)")] = round(latest_val - new_total_deposits, 2)
             df_hist.to_csv(HISTORY_PATH, index=False)
-            
     st.rerun()
 
 st.sidebar.markdown("---")
@@ -378,24 +476,30 @@ Stockwatch.pl używa <b style="color:#ecfa64;">ASP.NET_SessionId</b> — nie PHP
 ① Zaloguj się na stockwatch.pl<br>
 ② DevTools (F12) → <b>Application</b><br>
 ③ Cookies → <b>https://www.stockwatch.pl</b><br>
-④ Skopiuj wartość <b>ASP.NET_SessionId</b><br><br>
-<i>Alternatywnie: Network → dowolny request → Request Headers → Cookie</i>
+④ Skopiuj wartość <b>ASP.NET_SessionId</b>
 </div>
 """, unsafe_allow_html=True)
 new_phpsessid = st.sidebar.text_input(
     "ASP.NET_SessionId (cookie sesji)",
     value=settings.get("phpsessid", ""),
     type="password",
-    help="Wartość ciasteczka ASP.NET_SessionId z zalogowanej sesji Premium na stockwatch.pl. Bez niego dane pobierane są z Yahoo Finance lub lokalnej bazy (L2/L3)."
 )
 
 if new_phpsessid != settings.get("phpsessid", ""):
     settings["phpsessid"] = new_phpsessid
     with open(SETTINGS_PATH, "w") as f:
-        json.dump(settings, f)
+        json.dump(settings, f, indent=2)
     st.rerun()
 
-ALERTS_PATH = os.path.join(BASE_DIR, "data", "stockwatch_alerts.json")
+# Portfolio strategy badge in sidebar
+_strat_badge = {"erste": "#5B8DEF", "ing": "#5B8DEF", "ikze": "#34d399"}
+_strat_label = {"erste": "Wartościowa", "ing": "Wartościowa", "ikze": "Wzrostowa (IKE/IKZE)"}
+st.sidebar.markdown(f"""
+<div style="margin-top:12px;padding:8px 12px;background:rgba(255,255,255,0.06);border-radius:8px;border-left:3px solid {_strat_badge[selected_portfolio]};">
+  <div style="font-size:10px;color:rgba(255,255,255,0.5);">Strategia aktywna</div>
+  <div style="font-size:13px;font-weight:700;color:{_strat_badge[selected_portfolio]};">{_strat_label[selected_portfolio]}</div>
+</div>
+""", unsafe_allow_html=True)
 
 # TAB NAVIGATION
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -410,10 +514,11 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # TAB 1 & 2: REKOMENDACJE I STRATEGIA
 # ==========================================
 with tab1:
-    st.header("☀️ Rekomendacje Sesyjne (Stockwatch 8:00)")
+    _tab1_title = "☀️ Rekomendacje Sesyjne" if selected_portfolio != "ikze" else "🔍 Analiza Wzrostowa (Kwartalny Przegląd)"
+    st.header(_tab1_title)
     st.markdown("System pobierania i wieloczynnikowej analizy wskaźników giełdowych przed otwarciem sesji o 9:00.")
 
-    WATCHLIST_PATH = os.path.join(BASE_DIR, "config", "watchlist.json")
+    WATCHLIST_PATH = _paths["watchlist"]
     if os.path.exists(WATCHLIST_PATH):
         try:
             with open(WATCHLIST_PATH, "r") as f:
@@ -432,7 +537,7 @@ with tab1:
       <div class="note-bar note-bar-info"></div>
       <div class="note-body" style="font-size:12px;">
         <b>Spółki ({len(watchlist)}):</b> {' · '.join(watchlist)}<br>
-        <b>Źródło danych:</b> {source_status} &nbsp;|&nbsp; <b>Model:</b> C/Z 30% · C/WK 20% · EV/EBITDA 20% · DY 10% · Trend 20%
+        <b>Źródło danych:</b> {source_status} &nbsp;|&nbsp; <b>Model:</b> {"C/Z 15% · C/WK 10% · EV 30% · DY 0% · Trend 45% (Wzrostowy)" if selected_portfolio == "ikze" else "C/Z 30% · C/WK 20% · EV/EBITDA 20% · DY 10% · Trend 20% (Wartościowy)"}
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -444,8 +549,11 @@ with tab1:
             for ticker in watchlist:
                 indicators = scraper.get_indicators(ticker)
                 trend_score = scraper.get_technical_trend(ticker)
-                score = scraper.calculate_score(indicators, trend_score)
+                score = calculate_portfolio_score(indicators, trend_score, selected_portfolio)
                 recom = scraper.get_recommendation(score)
+                # IKE/IKZE: rename KUPUJ → AKUMULUJ (długoterminowa semantyka)
+                if selected_portfolio == "ikze" and recom["action"] == "KUPUJ":
+                    recom = dict(recom, action="AKUMULUJ")
                 recom_data.append({
                     "ticker": ticker,
                     "c_z": indicators.get("c_z"),
@@ -663,20 +771,33 @@ with tab2:
             total_live_stocks_val = 1.0
         df_strat["Udział Bieżący (%)"] = round((df_strat["Wycena Bieżąca (PLN)"] / total_live_stocks_val) * 100, 2)
         
-        # Allocation warning checks
+        # Allocation warning checks — different logic per portfolio
         allocation_warnings = []
-        for _, r in df_strat.iterrows():
-            if r["Udział Bieżący (%)"] > 15.0:
-                excess_pln = r["Wycena Bieżąca (PLN)"] - (total_live_stocks_val * 0.15)
-                allocation_warnings.append(f"⚠️ **Przekroczenie limitu alokacji spółki ({r['Spółka']}):** Udział wynosi **{r['Udział Bieżący (%)']:.2f}%** (limit 15%). Nadwyżka: **{excess_pln:,.2f} zł**. Sugerowana redukcja.")
-
         df_sect = df_strat.groupby("Sektor")["Wycena Bieżąca (PLN)"].sum().reset_index()
         df_sect["Udział (%)"] = round((df_sect["Wycena Bieżąca (PLN)"] / total_live_stocks_val) * 100, 2)
-        
-        for _, r in df_sect.iterrows():
-            if r["Udział (%)"] > 30.0:
-                excess_pln = r["Wycena Bieżąca (PLN)"] - (total_live_stocks_val * 0.30)
-                allocation_warnings.append(f"🚨 **Krytyczne przekroczenie sektora ({r['Sektor']}):** Udział wynosi **{r['Udział (%)']:.2f}%** (limit 30%). Nadwyżka: **{excess_pln:,.2f} zł**. Sugerowane rebalansowanie.")
+
+        if selected_portfolio == "ikze":
+            # IKE/IKZE: rebalancing alarm (ETF target 60%, single position limit 15%)
+            etf_val = df_strat.loc[df_strat["Spółka"].isin(ETF_TICKERS), "Wycena Bieżąca (PLN)"].sum()
+            etf_pct = etf_val / total_live_stocks_val * 100
+            if etf_pct < 55:
+                allocation_warnings.append(f"🔄 **Rebalansowanie wymagane — ETF:** Udział ETF wynosi **{etf_pct:.1f}%** (cel 60%, próg min 55%). Doważyć ETFBSPXPL lub ETFBW20TR.")
+            elif etf_pct > 65:
+                allocation_warnings.append(f"🔄 **Rebalansowanie wymagane — ETF:** Udział ETF wynosi **{etf_pct:.1f}%** (cel 60%, próg max 65%). Rozważyć zwiększenie growth stocks.")
+            for _, r in df_strat.iterrows():
+                if r["Udział Bieżący (%)"] > 15.0 and r["Spółka"] not in ETF_TICKERS:
+                    excess_pln = r["Wycena Bieżąca (PLN)"] - (total_live_stocks_val * 0.15)
+                    allocation_warnings.append(f"⚠️ **Koncentracja IKE/IKZE ({r['Spółka']}):** Udział wynosi **{r['Udział Bieżący (%)']:.2f}%** (limit 15%). Nadwyżka: **{excess_pln:,.2f} zł**.")
+        else:
+            # Erste/ING: standard limits 15%/30%
+            for _, r in df_strat.iterrows():
+                if r["Udział Bieżący (%)"] > 15.0:
+                    excess_pln = r["Wycena Bieżąca (PLN)"] - (total_live_stocks_val * 0.15)
+                    allocation_warnings.append(f"⚠️ **Przekroczenie limitu alokacji spółki ({r['Spółka']}):** Udział wynosi **{r['Udział Bieżący (%)']:.2f}%** (limit 15%). Nadwyżka: **{excess_pln:,.2f} zł**. Sugerowana redukcja.")
+            for _, r in df_sect.iterrows():
+                if r["Udział (%)"] > 30.0:
+                    excess_pln = r["Wycena Bieżąca (PLN)"] - (total_live_stocks_val * 0.30)
+                    allocation_warnings.append(f"🚨 **Krytyczne przekroczenie sektora ({r['Sektor']}):** Udział wynosi **{r['Udział (%)']:.2f}%** (limit 30%). Nadwyżka: **{excess_pln:,.2f} zł**. Sugerowane rebalansowanie.")
 
         if allocation_warnings:
             st.markdown('<div class="uxr-subheader"><div class="uxr-subheader-bar"></div><div class="uxr-subheader-text">⚠️ Ostrzeżenia Alokacyjne (Quality Gate)</div></div>', unsafe_allow_html=True)
@@ -747,15 +868,27 @@ with tab2:
                          else "#2563eb" if "Yahoo" in src
                          else "#9ca3af")
 
-            if change_pct <= -10.0:
-                badge = '<span style="background:#dc2626;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128721; STOP-LOSS!</span>'
-                row_bg = "#fff5f5"
-            elif change_pct >= 25.0:
-                badge = '<span style="background:#16a34a;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9989; TAKE-PROFIT!</span>'
-                row_bg = "#f0fdf4"
+            if selected_portfolio == "ikze":
+                # IKE/IKZE: no SL/TP, quarterly review badges
+                if change_pct >= 50.0:
+                    badge = '<span style="background:#7c3aed;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128200; PRZEJRZYJ +50%</span>'
+                    row_bg = "#f5f3ff"
+                elif change_pct <= -20.0:
+                    badge = '<span style="background:#ea580c;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128204; DO PRZEGLĄDU</span>'
+                    row_bg = "#fff7ed"
+                else:
+                    badge = '<span style="background:#065f46;color:#ecfa64;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9651; TRZYMAJ</span>'
+                    row_bg = "#ffffff"
             else:
-                badge = '<span style="background:#131f33;color:#ecfa64;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9711; OK</span>'
-                row_bg = "#ffffff"
+                if change_pct <= -10.0:
+                    badge = '<span style="background:#dc2626;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#128721; STOP-LOSS!</span>'
+                    row_bg = "#fff5f5"
+                elif change_pct >= 25.0:
+                    badge = '<span style="background:#16a34a;color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9989; TAKE-PROFIT!</span>'
+                    row_bg = "#f0fdf4"
+                else:
+                    badge = '<span style="background:#131f33;color:#ecfa64;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;">&#9711; OK</span>'
+                    row_bg = "#ffffff"
 
             src_badge = f'<span style="border:1.5px solid {src_color};color:{src_color};padding:1px 6px;border-radius:4px;font-size:9px;font-weight:700;">{src.split("(")[0].strip() or "PDF"}</span>'
             ep_badge_color = "#6b7280" if purchase_source == "PDF" else "#7c3aed"
@@ -809,8 +942,44 @@ with tab3:
     st.header("📊 Wyniki Portfela (Erste BM)")
     
     # 1. WGRYWANIE DANYCH PORTFELA
-    with st.expander("📥 Wgraj nowy wykaz instrumentów lub raport PDF (Erste BM)"):
-        upload_tab_csv, upload_tab_pdf = st.tabs(["📄 CSV — Wykaz instrumentów (zalecane)", "📑 PDF — Raport kwartalny"])
+    _exp_label = "📥 Wgraj dane portfela" if selected_portfolio != "ing" else "📥 Wgraj / Edytuj dane portfela ING"
+    with st.expander(_exp_label):
+        _tab_labels = ["✏️ Ręczna edycja", "📄 CSV", "📑 PDF"] if selected_portfolio == "ing" else ["📄 CSV — Wykaz instrumentów (zalecane)", "📑 PDF — Raport kwartalny", "✏️ Ręczna edycja"]
+        _upload_tabs = st.tabs(_tab_labels)
+        upload_tab_manual = _upload_tabs[0] if selected_portfolio == "ing" else _upload_tabs[2]
+        upload_tab_csv    = _upload_tabs[1] if selected_portfolio == "ing" else _upload_tabs[0]
+        upload_tab_pdf    = _upload_tabs[2] if selected_portfolio == "ing" else _upload_tabs[1]
+
+        # ── MANUAL EDITOR (primary for ING, fallback for others) ──────────────
+        with upload_tab_manual:
+            st.markdown("Edytuj pozycje bezpośrednio w tabeli. Kurs bieżący wpisz ręcznie lub odśwież przez Tab 2.")
+            _empty_row = {"Spółka": "", "Ilość": 0, "Kurs (PLN)": 0.0, "Wycena (PLN)": 0.0, "Udział (%)": 0.0}
+            if os.path.exists(HOLDINGS_PATH):
+                _df_manual = pd.read_csv(HOLDINGS_PATH)
+            else:
+                _df_manual = pd.DataFrame([_empty_row])
+            _edited = st.data_editor(
+                _df_manual,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "Spółka": st.column_config.TextColumn("Ticker", width="small"),
+                    "Ilość": st.column_config.NumberColumn("Ilość", min_value=0, step=1),
+                    "Kurs (PLN)": st.column_config.NumberColumn("Kurs (PLN)", min_value=0.0, format="%.2f"),
+                    "Wycena (PLN)": st.column_config.NumberColumn("Wycena (PLN)", format="%.2f", disabled=True),
+                    "Udział (%)": st.column_config.NumberColumn("Udział (%)", format="%.2f", disabled=True),
+                },
+                key=f"manual_editor_{selected_portfolio}",
+            )
+            if st.button("💾 Zapisz zmiany portfela", use_container_width=True, key="save_manual"):
+                _edited = _edited.dropna(subset=["Spółka"]).copy()
+                _edited = _edited[_edited["Spółka"].str.strip() != ""]
+                _edited["Wycena (PLN)"] = (_edited["Ilość"] * _edited["Kurs (PLN)"]).round(2)
+                _total_m = _edited["Wycena (PLN)"].sum() or 1.0
+                _edited["Udział (%)"] = (_edited["Wycena (PLN)"] / _total_m * 100).round(2)
+                _edited.to_csv(HOLDINGS_PATH, index=False)
+                st.success(f"Zapisano {len(_edited)} pozycji portfela {PORTFOLIO_NAMES[selected_portfolio]}!")
+                st.rerun()
 
         # ── CSV UPLOADER (primary, privacy-safe) ──────────────────────────────
         with upload_tab_csv:
@@ -1419,25 +1588,30 @@ with tab5:
     st.header("💰 Rekomendacja Nowych Inwestycji")
     st.markdown("Analiza, w co i dlaczego warto zainwestować nowy kapitał. Uwzględnia bieżące wagi portfela i nie rekomenduje spółek przekraczających limit 15%.")
 
-    col_a1, col_a2 = st.columns(2)
-    with col_a1:
-        invest_amount = st.selectbox("Kwota inwestycji", [1000, 2000, 5000], format_func=lambda x: f"{x:,} PLN")
-    with col_a2:
-        invest_horizon = st.selectbox("Horyzont inwestycji", ["3 miesiące (krótki)", "6 miesięcy (średni)", "12 miesięcy (długi)"])
+    _is_ikze = selected_portfolio == "ikze"
+    if _is_ikze:
+        invest_amount = st.selectbox("Kwota inwestycji", [500, 1000, 2000, 5000], format_func=lambda x: f"{x:,} PLN")
+        invest_horizon = "12 miesięcy (długi)"
+        st.info("🔒 IKE/IKZE — horyzont długoterminowy (25 lat). Kup i trzymaj do 2051 — tax-free przy wypłacie z IKE/IKZE.", icon=None)
+    else:
+        col_a1, col_a2 = st.columns(2)
+        with col_a1:
+            invest_amount = st.selectbox("Kwota inwestycji", [1000, 2000, 5000], format_func=lambda x: f"{x:,} PLN")
+        with col_a2:
+            invest_horizon = st.selectbox("Horyzont inwestycji", ["3 miesiące (krótki)", "6 miesięcy (średni)", "12 miesięcy (długi)"])
 
     if st.button("🔍 Analizuj i Doradź", type="primary", use_container_width=True):
         recom_data = st.session_state.get("recommendations_data")
         if not recom_data:
             with st.spinner("Pobieranie danych z Biznesradar / Yahoo Finance..."):
                 scraper_inv = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
-                wl_path = os.path.join(BASE_DIR, "config", "watchlist.json")
-                with open(wl_path, "r") as _f:
+                with open(WATCHLIST_PATH, "r") as _f:
                     wl_inv = json.load(_f)
                 recom_data = []
                 for _ticker in wl_inv:
                     _ind = scraper_inv.get_indicators(_ticker)
                     _trend = scraper_inv.get_technical_trend(_ticker)
-                    _score = scraper_inv.calculate_score(_ind, _trend)
+                    _score = calculate_portfolio_score(_ind, _trend, selected_portfolio)
                     _recom = scraper_inv.get_recommendation(_score)
                     recom_data.append({
                         "ticker": _ticker,
@@ -1480,6 +1654,17 @@ with tab5:
             candidates.append({**item, "score_adj": score_adj, "current_pct": cur_pct, "price": price})
 
         candidates.sort(key=lambda x: x["score_adj"], reverse=True)
+
+        # IKE/IKZE: if ETF allocation < 60%, bubble ETF tickers to the top
+        if _is_ikze:
+            _etf_val = sum(v for t, v in (_vals if os.path.exists(HOLDINGS_PATH) else {}).items() if t in ETF_TICKERS)
+            _total_ikze = _total_val if _total_val > 1 else 1.0
+            _etf_pct = _etf_val / _total_ikze * 100
+            if _etf_pct < 60.0:
+                etf_cands = [c for c in candidates if c["ticker"] in ETF_TICKERS]
+                other_cands = [c for c in candidates if c["ticker"] not in ETF_TICKERS]
+                candidates = etf_cands + other_cands
+
         top3 = candidates[:3]
 
         if not top3:
@@ -1491,13 +1676,19 @@ with tab5:
                 c["shares"] = int(c["alloc_pln"] / c["price"])
                 c["actual_pln"] = c["shares"] * c["price"]
                 c["new_pct"] = c["current_pct"] + (c["actual_pln"] / _total_val * 100)
-                c["rationale"] = _build_rationale(c, invest_horizon)
+                if _is_ikze and c["ticker"] in ETF_TICKERS:
+                    c["rationale"] = "Kup i trzymaj do 2051 — tax-free przy wypłacie z IKE/IKZE. ETF reinwestuje dywidendy wewnętrznie bez podatku."
+                elif _is_ikze:
+                    c["rationale"] = _build_rationale(c, invest_horizon) + " · Strategia wzrostowa IKE/IKZE (bez podatku Belki)"
+                else:
+                    c["rationale"] = _build_rationale(c, invest_horizon)
 
             st.session_state["invest_result"] = {
                 "amount": invest_amount,
                 "horizon": invest_horizon,
                 "candidates": top3,
                 "total_val": _total_val,
+                "is_ikze": _is_ikze,
             }
             st.rerun()
 
@@ -1510,7 +1701,7 @@ with tab5:
         <div class="note-card">
           <div class="note-bar note-bar-info"></div>
           <div class="note-body" style="font-size:12px;">
-            <b>Kwota:</b> {res['amount']:,} PLN &nbsp;|&nbsp; <b>Horyzont:</b> {res['horizon']} &nbsp;|&nbsp;
+            <b>Kwota:</b> {res['amount']:,} PLN &nbsp;|&nbsp; <b>Horyzont:</b> {"25 lat (IKE/IKZE — tax-free)" if res.get('is_ikze') else res['horizon']} &nbsp;|&nbsp;
             <b>Kandydaci:</b> {len(candidates_res)} spółek
           </div>
         </div>
