@@ -126,6 +126,73 @@ DEPOSIT_HISTORY_PATH = _paths["deposits"]
 
 os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
+SECTORS_MAPPING = {
+    # Finanse
+    "KRUK":      "Finanse i Windykacja",
+    "XTB":       "Finanse i Windykacja",
+    "PKOBP":     "Finanse i Windykacja",
+    "GPW":       "Finanse i Windykacja",
+    "GETIN":     "Finanse i Windykacja",
+    "PEKAO":     "Finanse i Windykacja",
+    "INGBSK":    "Finanse i Windykacja",
+    "BNPPPL":    "Finanse i Windykacja",
+    "ERSTE":     "Finanse i Windykacja",
+    "PZU":       "Finanse i Ubezpieczenia",
+    # Odzież i handel
+    "LPP":       "Odzież i Handel",
+    "MODIVO":    "Odzież i Handel",
+    "ALLEGRO":   "E-commerce i Technologia",
+    "ZABKA":     "Handel i Logistyka",
+    "ABPL":      "IT i Dystrybucja",
+    "INTERCARS": "Handel i Logistyka",
+    # Turystyka
+    "RAINBOW":   "Rozrywka i Turystyka",
+    "KOLEJKOWO": "Rozrywka i Turystyka",
+    # Elektrotechnika i energia
+    "GRODNO":    "Elektrotechnika i OZE",
+    "ELEKTROTI": "Elektrotechnika i OZE",
+    "ONDE":      "Energia i OZE",
+    "PKNORLEN":  "Energia i Paliwa",
+    "KOGENERA":  "Energia i Paliwa",
+    "KGHM":      "Surowce i Wydobycie",
+    "COGNOR":    "Surowce i Wydobycie",
+    # Biotechnologia
+    "RYVU":      "Biotechnologia i Medycyna",
+    "SYNEKTIK":  "Biotechnologia i Medycyna",
+    "SYN2BIO":   "Biotechnologia i Medycyna",
+    "MEDINICE":  "Biotechnologia i Medycyna",
+    "BIOCELTIX": "Biotechnologia i Medycyna",
+    "DIAG":      "Ochrona Zdrowia",
+    "NEUCA":     "Ochrona Zdrowia",
+    # Budownictwo
+    "DOMDEV":    "Budownictwo i Deweloperzy",
+    "DEKPOL":    "Budownictwo i Deweloperzy",
+    "RANKPROGR": "Budownictwo i Deweloperzy",
+    # Przemysł
+    "NEWAG":     "Przemysł i Transport",
+    "PKPCARGO":  "Przemysł i Transport",
+    "TORPOL":    "Przemysł i Transport",
+    "LUBAWA":    "Przemysł i Obrona",
+    "ZREMB":     "Przemysł i Maszyny",
+    "STAPORKOW": "Przemysł i Maszyny",
+    "KETY":      "Przemysł i Maszyny",
+    "PATENTUS":  "Przemysł i Maszyny",
+    # Spożywczy
+    "SEKO":      "Przemysł Spożywczy",
+    # Technologia i IT
+    "CREOTECH":  "Technologia i Kosmonautyka",
+    "SCANWAY":   "Technologia i Kosmonautyka",
+    "DATAWALK":  "IT i Technologia",
+    "CYBERFLKS": "IT i Technologia",
+    # Usługi
+    "BENEFIT":   "Usługi i HR",
+    "MOBRUK":    "Ekologia i Odpady",
+    "KLEPSYDRA": "Usługi",
+    # ETF
+    "ETFBW20TR": "Fundusze ETF",
+    "ETFBSPXPL": "Fundusze ETF",
+}
+
 
 def parse_erste_csv(file_obj):
     """
@@ -315,9 +382,41 @@ st.markdown("""
         font-family: 'Poppins', sans-serif !important; font-weight: 600 !important;
         border: none !important; border-radius: 8px !important;
         padding: 0.5rem 1rem !important; font-size: 13px !important;
-        width: 100% !important;
     }
     .stButton > button:hover { background-color: #cde200 !important; }
+    /* full-width only when button is inside a block-level container that needs it */
+    [data-testid="stVerticalBlock"] > [data-testid="stButton"] > button,
+    [data-testid="stColumn"] > [data-testid="stVerticalBlock"] > [data-testid="stButton"] > button {
+        width: 100% !important;
+    }
+
+    /* ── Section divider ── */
+    .section-divider {
+        border: none; border-top: 1px solid #e8ecf0;
+        margin: 20px 0; clear: both;
+    }
+
+    /* ── Portfolio context chip ── */
+    .portfolio-chip {
+        display: inline-flex; align-items: center; gap: 5px;
+        border-radius: 20px; padding: 3px 12px;
+        font-size: 11px; font-weight: 700;
+        font-family: 'Poppins', sans-serif;
+        margin-bottom: 10px; margin-top: -4px;
+    }
+
+    /* ── Expander header ── */
+    [data-testid="stExpander"] summary {
+        font-family: 'Poppins', sans-serif !important;
+        font-weight: 600 !important; font-size: 13px !important;
+        color: #1f2b40 !important;
+    }
+
+    /* ── st.info / st.warning style override ── */
+    [data-testid="stAlert"] {
+        border-radius: 8px !important; font-family: 'Poppins', sans-serif !important;
+        font-size: 13px !important;
+    }
 
     /* ── Metric cards grid (mobile-first: 1 col, grows up) ── */
     .metrics-grid {
@@ -462,6 +561,28 @@ st.markdown("""
 
 st.title("📈 GPW Smart Assistant")
 
+_CHIP_COLORS = {
+    "erste": ("#5B8DEF", "#e8f0fe"),
+    "ing":   ("#5B8DEF", "#e8f0fe"),
+    "ikze":  ("#34d399", "#ecfdf5"),
+}
+_CHIP_LABELS = {
+    "erste": "📈 Erste",
+    "ing":   "🏦 ING",
+    "ikze":  "🔒 IKE/IKZE",
+}
+
+def _section_divider():
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+
+def _portfolio_badge():
+    c, bg = _CHIP_COLORS[selected_portfolio]
+    label = _CHIP_LABELS[selected_portfolio]
+    st.markdown(
+        f'<div class="portfolio-chip" style="background:{bg};color:{c};border:1.5px solid {c};">{label}</div>',
+        unsafe_allow_html=True,
+    )
+
 # ==========================================
 # SIDEBAR - PORTFOLIO SELECTOR + CONFIG
 # ==========================================
@@ -554,6 +675,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     _tab1_title = "☀️ Rekomendacje Sesyjne" if selected_portfolio != "ikze" else "🔍 Analiza Wzrostowa (Kwartalny Przegląd)"
     st.header(_tab1_title)
+    _portfolio_badge()
     st.markdown("System pobierania i wieloczynnikowej analizy wskaźników giełdowych przed otwarciem sesji o 9:00.")
 
     WATCHLIST_PATH = _paths["watchlist"]
@@ -732,6 +854,7 @@ W słowniku `STATIC_FALLBACKS` dodaj minimalne dane awaryjne:
 
 with tab2:
     st.header("🎯 Realizacja Strategii Portfela")
+    _portfolio_badge()
     st.markdown("Nadzór nad limitami alokacji kapitału oraz kontrola ryzyka (Stop-Loss / Take-Profit).")
 
     if os.path.exists(HOLDINGS_PATH):
@@ -740,39 +863,14 @@ with tab2:
         df_holdings = pd.DataFrame()
 
     if df_holdings.empty:
-        st.info("Najpierw wgraj raport wyciągu PDF z Erste BM w zakładce 'Wyniki i Portfel', aby załadować pozycje.")
+        st.markdown("""
+        <div class="note-card">
+          <div class="note-bar note-bar-warn"></div>
+          <div class="note-body">
+            Brak danych portfela. Przejdź do zakładki <b>📊 Wyniki i Portfel</b> i wgraj plik CSV lub PDF.
+          </div>
+        </div>""", unsafe_allow_html=True)
     else:
-        SECTORS_MAPPING = {
-            "KRUK":      "Finanse i Windykacja",
-            "XTB":       "Finanse i Windykacja",
-            "PKOBP":     "Finanse i Windykacja",
-            "GPW":       "Finanse i Windykacja",
-            "GETIN":     "Finanse i Windykacja",
-            "LPP":       "Odzież i Handel",
-            "MODIVO":    "Odzież i Handel",
-            "RAINBOW":   "Rozrywka i Turystyka",
-            "KOLEJKOWO": "Rozrywka i Turystyka",
-            "GRODNO":    "Elektrotechnika i OZE",
-            "RYVU":      "Biotechnologia i Medycyna",
-            "SYNEKTIK":  "Biotechnologia i Medycyna",
-            "SYN2BIO":   "Biotechnologia i Medycyna",
-            "DOMDEV":    "Budownictwo i Deweloperzy",
-            "DEKPOL":    "Budownictwo i Deweloperzy",
-            "RANKPROGR": "Budownictwo i Deweloperzy",
-            "SEKO":      "Przemysł Spożywczy",
-            "NEWAG":     "Przemysł i Transport",
-            "PKPCARGO":  "Przemysł i Transport",
-            "PKNORLEN":  "Energia i Paliwa",
-            "LUBAWA":    "Przemysł i Obrona",
-            "ZREMB":     "Przemysł i Maszyny",
-            "STAPORKOW": "Przemysł i Maszyny",
-            "KLEPSYDRA": "Usługi",
-            "ETFBW20TR": "Fundusze ETF",
-            "ETFBSPXPL": "Fundusze ETF",
-            "PKOBP":     "Finanse i Windykacja",
-            "LUBAWA":    "Przemysł i Obrona",
-        }
-
         # Initialize live prices from the holdings CSV (purchase price as default)
         if "live_prices" not in st.session_state or not st.session_state["live_prices"]:
             st.session_state["live_prices"] = {row["Spółka"]: row["Kurs (PLN)"] for _, row in df_holdings.iterrows()}
@@ -1018,7 +1116,9 @@ with tab2:
 # TAB 3: WYNIKI PORTFELA (CEL 3)
 # ==========================================
 with tab3:
-    st.header("📊 Wyniki Portfela (Erste BM)")
+    _tab3_names = {"erste": "Erste BM", "ing": "ING Bank Polska", "ikze": "IKE/IKZE"}
+    st.header(f"📊 Wyniki Portfela — {_tab3_names[selected_portfolio]}")
+    _portfolio_badge()
     
     # 1. WGRYWANIE DANYCH PORTFELA
     _exp_label = "📥 Wgraj dane portfela" if selected_portfolio != "ing" else "📥 Wgraj / Edytuj dane portfela ING"
@@ -1272,13 +1372,15 @@ with tab3:
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.warning("Brak danych historycznych. Wgraj raport PDF lub wykaz instrumentów, aby wygenerować metryki.")
+        st.markdown("""<div class="note-card"><div class="note-bar note-bar-warn"></div>
+        <div class="note-body">Brak danych historycznych. Wgraj CSV lub PDF w sekcji powyżej.</div></div>""",
+        unsafe_allow_html=True)
 
-    st.markdown("---")
+    _section_divider()
 
     # 3. WYKRES EWOLUCJI PORTFELA + ZNACZNIKI WPŁAT
     if not df_history.empty:
-        st.subheader("Ewolucja Portfela, Zysku i Sumy Wpłat")
+        st.markdown('<div class="uxr-subheader"><div class="uxr-subheader-bar"></div><div class="uxr-subheader-text">📈 Ewolucja Portfela, Zysku i Sumy Wpłat</div></div>', unsafe_allow_html=True)
 
         # Load deposit history
         deposits = []
@@ -1399,7 +1501,7 @@ with tab3:
         st.info("Brak pliku historii wpłat (data/deposit_history.json).")
         
     # 4. STRUCTURA I SKŁAD PORTFELA
-    st.subheader("Skład i Struktura Portfela")
+    st.markdown('<div class="uxr-subheader"><div class="uxr-subheader-bar"></div><div class="uxr-subheader-text">🥧 Skład i Struktura Portfela</div></div>', unsafe_allow_html=True)
     
     if os.path.exists(HOLDINGS_PATH):
         df_holdings = pd.read_csv(HOLDINGS_PATH)
@@ -1448,6 +1550,7 @@ with tab3:
 # ==========================================
 with tab4:
     st.header("🔔 Alerty Stockwatch — Nowe Analizy")
+    _portfolio_badge()
     st.markdown("Monitoruje pojawienie się nowych analiz technicznych i fundamentalnych na Stockwatch Premium dla spółek z Twojego portfela i watchlisty.")
 
     has_cookie = bool(settings.get("phpsessid", "").strip())
@@ -1464,9 +1567,7 @@ with tab4:
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="note-card"><div class="note-bar note-bar-info"></div><div class="note-body">Sesja Premium aktywna ✓ &nbsp;|&nbsp; Sprawdzane spółki: portfel + watchlista</div></div>', unsafe_allow_html=True)
-
-    st.markdown("---")
+        st.markdown('<div class="note-card"><div class="note-bar note-bar-info"></div><div class="note-body">Sesja Premium aktywna ✓ &nbsp;|&nbsp; Sprawdzane spółki: portfel + watchlista</div></div>', unsafe_allow_html=True)
 
     # Load alerts state
     if os.path.exists(ALERTS_PATH):
@@ -1489,11 +1590,12 @@ with tab4:
         except Exception:
             pass
 
-    col_btn_a, col_info_a = st.columns([1, 2])
-    with col_btn_a:
-        check_clicked = st.button("🔍 Sprawdź nowe analizy", use_container_width=True, type="primary", disabled=not has_cookie)
-    with col_info_a:
-        st.markdown(f"**Obserwowane spółki ({len(alert_tickers)}):** `{', '.join(sorted(alert_tickers))}`")
+    _section_divider()
+    check_clicked = st.button("🔍 Sprawdź nowe analizy", use_container_width=True, type="primary", disabled=not has_cookie)
+    with st.expander(f"📋 Obserwowane spółki ({len(alert_tickers)})", expanded=False):
+        _cols_a = st.columns(5)
+        for _i, _t in enumerate(sorted(alert_tickers)):
+            _cols_a[_i % 5].markdown(f"`{_t}`")
 
     if check_clicked and has_cookie:
         with st.spinner("Pobieram analizy ze Stockwatch Premium..."):
@@ -1517,15 +1619,15 @@ with tab4:
             st.success(f"Znaleziono **{len(new_articles)}** nowych analiz!")
             st.rerun()
 
-    st.markdown("---")
+    _section_divider()
 
     # Display stored articles
     all_stored = alerts_state.get("articles", [])
     if not all_stored:
-        st.info("Brak zapisanych alertów. Kliknij 'Sprawdź nowe analizy' (wymaga ciasteczka Premium).")
+        st.markdown('<div class="note-card"><div class="note-bar note-bar-info"></div><div class="note-body">Brak zapisanych alertów. Kliknij <b>Sprawdź nowe analizy</b> (wymaga ciasteczka Premium).</div></div>', unsafe_allow_html=True)
     else:
         # Filter controls
-        col_f1, col_f2 = st.columns([1, 2])
+        col_f1, col_f2 = st.columns([1, 1])
         with col_f1:
             kind_filter = st.selectbox("Typ analizy", ["Wszystkie", "Analiza techniczna", "Analiza fundamentalna", "Artykuł / komentarz"])
         with col_f2:
@@ -1665,13 +1767,14 @@ def _build_rationale(item, horizon_label):
 
 with tab5:
     st.header("💰 Rekomendacja Nowych Inwestycji")
+    _portfolio_badge()
     st.markdown("Analiza, w co i dlaczego warto zainwestować nowy kapitał. Uwzględnia bieżące wagi portfela i nie rekomenduje spółek przekraczających limit 15%.")
 
     _is_ikze = selected_portfolio == "ikze"
     if _is_ikze:
         invest_amount = st.selectbox("Kwota inwestycji", [500, 1000, 2000, 5000], format_func=lambda x: f"{x:,} PLN")
         invest_horizon = "12 miesięcy (długi)"
-        st.info("🔒 IKE/IKZE — horyzont długoterminowy (25 lat). Kup i trzymaj do 2051 — tax-free przy wypłacie z IKE/IKZE.", icon=None)
+        st.markdown('<div class="note-card"><div class="note-bar" style="background:#34d399;"></div><div class="note-body" style="font-size:12px;">🔒 <b>IKE/IKZE</b> — horyzont długoterminowy (25 lat). Kup i trzymaj do 2051 — zyski kapitałowe <b>tax-free</b> przy wypłacie z IKE/IKZE.</div></div>', unsafe_allow_html=True)
     else:
         col_a1, col_a2 = st.columns(2)
         with col_a1:
