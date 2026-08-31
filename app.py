@@ -563,6 +563,42 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
 
+    _wl_file = f"config/{selected_portfolio}_watchlist.json"
+    with st.expander(f"📋 Obserwowane spółki ({len(watchlist)}) — jak dodać nową?"):
+        st.markdown("**Aktualna watchlista:**")
+        _wl_cols = st.columns(4)
+        for _i, _t in enumerate(watchlist):
+            _wl_cols[_i % 4].markdown(f"• `{_t}`")
+        st.markdown("---")
+        st.markdown("**Jak dodać nową spółkę do obserwacji?**")
+        st.markdown(f"""
+**Krok 1 — dodaj ticker do watchlisty** (`{_wl_file}`):
+```json
+["TICKER_NOWEJ_SPOLKI", ...istniejące...]
+```
+
+**Krok 2 — zarejestruj spółkę w scraperze** (`src/stockwatch_scraper.py`):
+
+W słowniku `STOCKWATCH_SLUGS` dodaj:
+```python
+"TICKER": "slug-ze-stockwatch",   # np. "DINO": "dino-polska"
+```
+Slug to końcówka URL ze strony spółki na stockwatch.pl, np. `stockwatch.pl/gpw/dino-polska,notowania.aspx` → slug = `dino-polska`.
+
+W słowniku `YFIN_TICKERS` dodaj:
+```python
+"TICKER": "TICKER.WA",   # np. "DINO": "DNP.WA"
+```
+Symbol Yahoo Finance znajdziesz na finance.yahoo.com — zwykle to skrót GPW + `.WA`.
+
+W słowniku `STATIC_FALLBACKS` dodaj minimalne dane awaryjne:
+```python
+"TICKER": {{"price": 0, "c_z": None, "c_wk": None, "ev_ebitda": None, "dy": None}},
+```
+
+**Krok 3 — zrestartuj aplikację** (Streamlit odświeży watchlistę automatycznie po restarcie).
+""")
+
     if st.button("🔄 Uruchom Analizę", use_container_width=True, type="primary"):
         with st.spinner("Pobieranie wskaźników..."):
             scraper = StockwatchScraper(phpsessid=settings.get("phpsessid", ""))
