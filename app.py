@@ -13,10 +13,10 @@ from src.stockwatch_scraper import StockwatchScraper, YFIN_TICKERS
 
 # Set page config for mobile friendliness
 st.set_page_config(
-    page_title="GPW Erste Portfolio",
+    page_title="GPW Smart Assistant",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -244,6 +244,7 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #111926 !important; }
     [data-testid="stSidebar"] * { color: rgba(255,255,255,0.85) !important;
                                    font-family: 'Poppins', sans-serif !important; }
+    [data-testid="stSidebar"] svg { fill: rgba(255,255,255,0.65) !important; }
     [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
         color: #ecfa64 !important; font-size: 14px !important; letter-spacing: 0.5px;
     }
@@ -252,6 +253,26 @@ st.markdown("""
     [data-testid="stSidebar"] input {
         background: #1f2b40 !important; color: #fff !important;
         border: 1px solid rgba(255,255,255,0.15) !important; border-radius: 6px !important;
+    }
+    /* Selectbox — dark background + visible chevron */
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
+        background-color: #1f2b40 !important;
+        border: 1px solid rgba(255,255,255,0.18) !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] svg {
+        fill: rgba(255,255,255,0.65) !important;
+    }
+    /* Number input +/- step buttons */
+    [data-testid="stSidebar"] [data-testid="stNumberInput"] button {
+        background: rgba(255,255,255,0.07) !important;
+        border-color: rgba(255,255,255,0.12) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stNumberInput"] button:hover {
+        background: rgba(255,255,255,0.14) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stNumberInput"] button svg {
+        fill: rgba(255,255,255,0.75) !important;
     }
 
     /* ── Tabs — scrollable on mobile ── */
@@ -444,7 +465,7 @@ ALERTS_PATH = _paths["alerts"]
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Suma wpłat zewnętrznych (PLN)**")
-st.sidebar.markdown("<div style='font-size:11px;color:rgba(255,255,255,0.55);'>Zysk = Wartość Portfela − Suma Wpłat</div>", unsafe_allow_html=True)
+st.sidebar.markdown("<div style='font-size:11px;color:rgba(255,255,255,0.75);'>Zysk = Wartość Portfela − Suma Wpłat</div>", unsafe_allow_html=True)
 
 new_total_deposits = st.sidebar.number_input(
     "Wpłaty łącznie (PLN)",
@@ -470,7 +491,7 @@ if new_total_deposits != settings["total_deposits"]:
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔑 Autoryzacja Stockwatch Premium")
 st.sidebar.markdown("""
-<div style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1.6;margin-bottom:8px;">
+<div style="font-size:11px;color:rgba(255,255,255,0.78);line-height:1.6;margin-bottom:8px;">
 Stockwatch.pl używa <b style="color:#ecfa64;">ASP.NET_SessionId</b> — nie PHPSESSID.<br><br>
 <b>Jak znaleźć:</b><br>
 ① Zaloguj się na stockwatch.pl<br>
@@ -496,7 +517,7 @@ _strat_badge = {"erste": "#5B8DEF", "ing": "#5B8DEF", "ikze": "#34d399"}
 _strat_label = {"erste": "Wartościowa", "ing": "Wartościowa", "ikze": "Wzrostowa (IKE/IKZE)"}
 st.sidebar.markdown(f"""
 <div style="margin-top:12px;padding:8px 12px;background:rgba(255,255,255,0.06);border-radius:8px;border-left:3px solid {_strat_badge[selected_portfolio]};">
-  <div style="font-size:10px;color:rgba(255,255,255,0.5);">Strategia aktywna</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.72);">Strategia aktywna</div>
   <div style="font-size:13px;font-weight:700;color:{_strat_badge[selected_portfolio]};">{_strat_label[selected_portfolio]}</div>
 </div>
 """, unsafe_allow_html=True)
