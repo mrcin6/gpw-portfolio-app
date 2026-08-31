@@ -67,48 +67,47 @@ def load_settings(settings_path: str) -> dict:
     return defaults.copy()
 
 
+def _comp_scores(c_z, c_wk, ev_ebitda, dy):
+    """Component scores (0–100) for each fundamental indicator."""
+    if c_z is None:       s_cz = 50.0
+    elif c_z < 0:         s_cz = 0.0
+    elif c_z < 5:         s_cz = 50.0
+    elif c_z <= 12:       s_cz = 100.0
+    elif c_z <= 20:       s_cz = 70.0
+    elif c_z <= 35:       s_cz = 40.0
+    else:                 s_cz = 10.0
+
+    if c_wk is None:      s_cwk = 50.0
+    elif c_wk < 0:        s_cwk = 0.0
+    elif c_wk <= 1.0:     s_cwk = 100.0
+    elif c_wk <= 2.5:     s_cwk = 80.0
+    elif c_wk <= 4.0:     s_cwk = 50.0
+    else:                 s_cwk = 20.0
+
+    if ev_ebitda is None: s_ev = 50.0
+    elif ev_ebitda < 0:   s_ev = 0.0
+    elif ev_ebitda <= 6:  s_ev = 100.0
+    elif ev_ebitda <= 11: s_ev = 75.0
+    elif ev_ebitda <= 16: s_ev = 40.0
+    else:                 s_ev = 15.0
+
+    if not dy or dy == 0.0: s_dy = 0.0
+    elif dy < 2.0:          s_dy = 30.0
+    elif dy < 5.0:          s_dy = 70.0
+    elif dy <= 10.0:        s_dy = 100.0
+    else:                   s_dy = 80.0
+
+    return s_cz, s_cwk, s_ev, s_dy
+
+
 def calculate_portfolio_score(indicators: dict, trend_score: float, portfolio: str) -> float:
-    """Score with per-portfolio weights, reusing _comp_scores logic inline."""
     w = SCORE_WEIGHTS.get(portfolio, SCORE_WEIGHTS["erste"])
-    c_z = indicators.get("c_z")
-    c_wk = indicators.get("c_wk")
-    ev = indicators.get("ev_ebitda")
-    dy = indicators.get("dy", 0.0) or 0.0
-
-    def _s_cz(v):
-        if v is None: return 50.0
-        if v < 0: return 0.0
-        if v < 5: return 50.0
-        if v <= 12: return 100.0
-        if v <= 20: return 70.0
-        if v <= 35: return 40.0
-        return 10.0
-
-    def _s_cwk(v):
-        if v is None: return 50.0
-        if v < 0: return 0.0
-        if v <= 1.0: return 100.0
-        if v <= 2.5: return 80.0
-        if v <= 4.0: return 50.0
-        return 20.0
-
-    def _s_ev(v):
-        if v is None: return 50.0
-        if v < 0: return 0.0
-        if v <= 6.0: return 100.0
-        if v <= 11.0: return 75.0
-        if v <= 16.0: return 40.0
-        return 15.0
-
-    def _s_dy(v):
-        if not v or v == 0.0: return 0.0
-        if v < 2.0: return 30.0
-        if v < 5.0: return 70.0
-        if v <= 10.0: return 100.0
-        return 80.0
-
-    score = (w["cz"] * _s_cz(c_z) + w["cwk"] * _s_cwk(c_wk) +
-             w["ev"] * _s_ev(ev) + w["dy"] * _s_dy(dy) +
+    s_cz, s_cwk, s_ev, s_dy = _comp_scores(
+        indicators.get("c_z"), indicators.get("c_wk"),
+        indicators.get("ev_ebitda"), indicators.get("dy", 0.0) or 0.0,
+    )
+    score = (w["cz"] * s_cz + w["cwk"] * s_cwk +
+             w["ev"] * s_ev + w["dy"] * s_dy +
              w["trend"] * float(trend_score or 70))
     return round(score, 1)
 
@@ -118,11 +117,12 @@ _active_portfolio = st.session_state.get("active_portfolio", "erste")
 _paths = get_paths(_active_portfolio)
 
 # Backward-compatible path constants — reassigned per active portfolio
-HOLDINGS_PATH      = _paths["holdings"]
-HISTORY_PATH       = _paths["history"]
-SETTINGS_PATH      = _paths["settings"]
-ENTRY_PRICES_PATH  = _paths["entry"]
+HOLDINGS_PATH        = _paths["holdings"]
+HISTORY_PATH         = _paths["history"]
+SETTINGS_PATH        = _paths["settings"]
+ENTRY_PRICES_PATH    = _paths["entry"]
 DEPOSIT_HISTORY_PATH = _paths["deposits"]
+WATCHLIST_PATH       = _paths["watchlist"]
 
 os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
@@ -678,7 +678,6 @@ with tab1:
     _portfolio_badge()
     st.markdown("System pobierania i wieloczynnikowej analizy wskaźników giełdowych przed otwarciem sesji o 9:00.")
 
-    WATCHLIST_PATH = _paths["watchlist"]
     if os.path.exists(WATCHLIST_PATH):
         try:
             with open(WATCHLIST_PATH, "r") as f:
@@ -1223,61 +1222,64 @@ with tab3:
             """, unsafe_allow_html=True)
             uploaded_csv = st.file_uploader("Wybierz plik CSV", type=["csv"], key="csv_uploader")
             if uploaded_csv is not None:
-                try:
-                    with st.spinner("Przetwarzanie pliku CSV..."):
-                        holdings_csv, entry_prices_csv, stocks_val_csv = parse_erste_csv(uploaded_csv)
+                # Guard: process each file exactly once (prevents infinite rerun loop)
+                _csv_id = f"{uploaded_csv.name}_{uploaded_csv.size}"
+                if st.session_state.get("_csv_processed_id") == _csv_id:
+                    st.success(f"Plik {uploaded_csv.name} już wczytany — dane są aktualne.")
+                else:
+                    try:
+                        with st.spinner("Przetwarzanie pliku CSV..."):
+                            holdings_csv, entry_prices_csv, stocks_val_csv = parse_erste_csv(uploaded_csv)
 
-                    if not holdings_csv:
-                        st.error("Nie znaleziono pozycji w pliku CSV. Sprawdź format pliku.")
-                    else:
-                        # Extract date from filename: YYYY-MM-DD
-                        fname = uploaded_csv.name
-                        date_m = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
-                        rep_date_csv = date_m.group(1) if date_m else pd.Timestamp.today().strftime("%Y-%m-%d")
-
-                        # Update current_holdings.csv
-                        total_s = stocks_val_csv if stocks_val_csv else 1.0
-                        holdings_rows = []
-                        for h in sorted(holdings_csv, key=lambda x: -x["valuation"]):
-                            holdings_rows.append({
-                                "Spółka": h["ticker"],
-                                "Ilość": h["quantity"],
-                                "Kurs (PLN)": h["price"],
-                                "Wycena (PLN)": h["valuation"],
-                                "Udział (%)": round(h["valuation"] / total_s * 100, 2),
-                            })
-                        pd.DataFrame(holdings_rows).to_csv(HOLDINGS_PATH, index=False)
-
-                        # Auto-populate entry_prices.json with Średni kurs nabycia
-                        if entry_prices_csv:
-                            save_entry_prices(entry_prices_csv, source="csv")
-
-                        # Update portfolio_history.csv (stocks only — CSV has no cash info)
-                        df_hist = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
-                        df_hist["Data"] = df_hist["Data"].astype(str)
-                        new_hist_row = {
-                            "Data": rep_date_csv,
-                            "Wartość Całkowita (PLN)": stocks_val_csv,
-                            "Wycena Akcji (PLN)": stocks_val_csv,
-                            "Gotówka (PLN)": 0.0,
-                            "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
-                            "Zysk (PLN)": round(stocks_val_csv - settings["total_deposits"], 2),
-                        }
-                        if rep_date_csv in df_hist["Data"].values:
-                            for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
-                                df_hist.loc[df_hist["Data"] == rep_date_csv, col] = new_hist_row[col]
-                            st.success(f"Zaktualizowano dane dla dnia: {rep_date_csv}!")
+                        if not holdings_csv:
+                            st.error("Nie znaleziono pozycji w pliku CSV. Sprawdź format pliku.")
                         else:
-                            df_hist = pd.concat([df_hist, pd.DataFrame([new_hist_row])], ignore_index=True)
-                            df_hist = df_hist.sort_values(by="Data").reset_index(drop=True)
-                            st.success(f"Dodano dane do historii: {rep_date_csv} — {len(holdings_csv)} spółek, wycena akcji: {stocks_val_csv:,.2f} PLN.")
-                        df_hist.to_csv(HISTORY_PATH, index=False)
+                            fname = uploaded_csv.name
+                            date_m = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
+                            rep_date_csv = date_m.group(1) if date_m else pd.Timestamp.today().strftime("%Y-%m-%d")
 
-                        ep_info = f" Wczytano {len(entry_prices_csv)} cen wejścia (Średni kurs nabycia)." if entry_prices_csv else ""
-                        st.success(f"Zaktualizowano portfel ({len(holdings_csv)} pozycji).{ep_info}")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Błąd przetwarzania CSV: {e}")
+                            total_s = stocks_val_csv if stocks_val_csv else 1.0
+                            holdings_rows = []
+                            for h in sorted(holdings_csv, key=lambda x: -x["valuation"]):
+                                holdings_rows.append({
+                                    "Spółka": h["ticker"],
+                                    "Ilość": h["quantity"],
+                                    "Kurs (PLN)": h["price"],
+                                    "Wycena (PLN)": h["valuation"],
+                                    "Udział (%)": round(h["valuation"] / total_s * 100, 2),
+                                })
+                            pd.DataFrame(holdings_rows).to_csv(HOLDINGS_PATH, index=False)
+
+                            if entry_prices_csv:
+                                save_entry_prices(entry_prices_csv, source="csv")
+
+                            df_hist = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
+                            df_hist["Data"] = df_hist["Data"].astype(str)
+                            new_hist_row = {
+                                "Data": rep_date_csv,
+                                "Wartość Całkowita (PLN)": stocks_val_csv,
+                                "Wycena Akcji (PLN)": stocks_val_csv,
+                                "Gotówka (PLN)": 0.0,
+                                "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
+                                "Zysk (PLN)": round(stocks_val_csv - settings["total_deposits"], 2),
+                            }
+                            if rep_date_csv in df_hist["Data"].values:
+                                for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
+                                    df_hist.loc[df_hist["Data"] == rep_date_csv, col] = new_hist_row[col]
+                            else:
+                                df_hist = pd.concat([df_hist, pd.DataFrame([new_hist_row])], ignore_index=True)
+                                df_hist = df_hist.sort_values(by="Data").reset_index(drop=True)
+                            df_hist.to_csv(HISTORY_PATH, index=False)
+
+                            ep_info = f" Wczytano {len(entry_prices_csv)} cen wejścia." if entry_prices_csv else ""
+                            st.success(f"Wczytano {rep_date_csv} — {len(holdings_csv)} spółek, {stocks_val_csv:,.2f} PLN.{ep_info}")
+                            st.session_state["_csv_processed_id"] = _csv_id
+                            # Invalidate stale live-price cache so Tab 2 refreshes on next visit
+                            st.session_state.pop("live_prices", None)
+                            st.session_state.pop("live_sources", None)
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Błąd przetwarzania CSV: {e}")
 
         # ── PDF UPLOADER (fallback, privacy warning) ──────────────────────────
         with upload_tab_pdf:
@@ -1294,64 +1296,70 @@ with tab3:
             """, unsafe_allow_html=True)
             uploaded_file = st.file_uploader("Wybierz plik PDF wyciągu", type=["pdf"], key="pdf_uploader")
             if uploaded_file is not None:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                    tmp_file.write(uploaded_file.read())
-                    tmp_path = tmp_file.name
+                # Guard: process each file exactly once (prevents infinite rerun loop)
+                _pdf_id = f"{uploaded_file.name}_{uploaded_file.size}"
+                if st.session_state.get("_pdf_processed_id") == _pdf_id:
+                    st.success(f"Plik {uploaded_file.name} już wczytany — dane są aktualne.")
+                else:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                        tmp_file.write(uploaded_file.read())
+                        tmp_path = tmp_file.name
 
-                try:
-                    with st.spinner("Przetwarzanie raportu PDF..."):
-                        parsed_data = parse_erste_pdf(tmp_path)
+                    try:
+                        with st.spinner("Przetwarzanie raportu PDF..."):
+                            parsed_data = parse_erste_pdf(tmp_path)
 
-                    if parsed_data["report_date"] is not None:
-                        rep_date = parsed_data["report_date"]
+                        if parsed_data["report_date"] is not None:
+                            rep_date = parsed_data["report_date"]
 
-                        df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
-                        df_history["Data"] = df_history["Data"].astype(str)
+                            df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
+                            df_history["Data"] = df_history["Data"].astype(str)
 
-                        val = parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"]
+                            val = parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"]
 
-                        new_row = {
-                            "Data": rep_date,
-                            "Wartość Całkowita (PLN)": val,
-                            "Wycena Akcji (PLN)": parsed_data["stocks_value"],
-                            "Gotówka (PLN)": parsed_data.get("cash_value", parsed_data.get("cash_val", 0.0)),
-                            "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
-                            "Zysk (PLN)": round(val - settings["total_deposits"], 2),
-                        }
+                            new_row = {
+                                "Data": rep_date,
+                                "Wartość Całkowita (PLN)": val,
+                                "Wycena Akcji (PLN)": parsed_data["stocks_value"],
+                                "Gotówka (PLN)": parsed_data.get("cash_value", parsed_data.get("cash_val", 0.0)),
+                                "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
+                                "Zysk (PLN)": round(val - settings["total_deposits"], 2),
+                            }
 
-                        if rep_date in df_history["Data"].values:
-                            for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
-                                df_history.loc[df_history["Data"] == rep_date, col] = new_row[col]
-                            st.success(f"Zaktualizowano dane dla raportu z dnia: {rep_date}!")
+                            if rep_date in df_history["Data"].values:
+                                for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
+                                    df_history.loc[df_history["Data"] == rep_date, col] = new_row[col]
+                            else:
+                                df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
+                                df_history = df_history.sort_values(by="Data").reset_index(drop=True)
+
+                            df_history.to_csv(HISTORY_PATH, index=False)
+
+                            if parsed_data["holdings"]:
+                                holdings_list = []
+                                total_stocks = parsed_data["stocks_value"] or sum(h["valuation"] for h in parsed_data["holdings"]) or 1.0
+                                for h in parsed_data["holdings"]:
+                                    holdings_list.append({
+                                        "Spółka": h["ticker"],
+                                        "Ilość": h["quantity"],
+                                        "Kurs (PLN)": h["price"],
+                                        "Wycena (PLN)": h["valuation"],
+                                        "Udział (%)": round((h["valuation"] / total_stocks) * 100, 2),
+                                    })
+                                pd.DataFrame(holdings_list).sort_values(by="Wycena (PLN)", ascending=False).reset_index(drop=True).to_csv(HOLDINGS_PATH, index=False)
+
+                            st.success(f"Wczytano raport z dnia {rep_date}!")
+                            st.session_state["_pdf_processed_id"] = _pdf_id
+                            st.session_state.pop("live_prices", None)
+                            st.session_state.pop("live_sources", None)
+                            st.rerun()
                         else:
-                            df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
-                            df_history = df_history.sort_values(by="Data").reset_index(drop=True)
-                            st.success(f"Dodano nowy raport do historii z dnia: {rep_date}!")
-
-                        df_history.to_csv(HISTORY_PATH, index=False)
-
-                        if parsed_data["holdings"]:
-                            holdings_list = []
-                            total_stocks = parsed_data["stocks_value"] or sum(h["valuation"] for h in parsed_data["holdings"]) or 1.0
-                            for h in parsed_data["holdings"]:
-                                holdings_list.append({
-                                    "Spółka": h["ticker"],
-                                    "Ilość": h["quantity"],
-                                    "Kurs (PLN)": h["price"],
-                                    "Wycena (PLN)": h["valuation"],
-                                    "Udział (%)": round((h["valuation"] / total_stocks) * 100, 2),
-                                })
-                            pd.DataFrame(holdings_list).sort_values(by="Wycena (PLN)", ascending=False).reset_index(drop=True).to_csv(HOLDINGS_PATH, index=False)
-                            st.success("Zaktualizowano aktualną strukturę portfela!")
-
-                        st.rerun()
-                    else:
-                        st.error("Nie udało się sparsować raportu. Upewnij się, że wgrywasz poprawny wyciąg z Erste BM.")
-                except Exception as e:
-                    st.error(f"Wystąpił błąd podczas przetwarzania pliku PDF: {str(e)}")
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
+                            st.error("Nie udało się sparsować raportu. Upewnij się, że wgrywasz poprawny wyciąg z Erste BM.")
+                    except Exception as e:
+                        st.error(f"Wystąpił błąd podczas przetwarzania pliku PDF: {str(e)}")
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
 
     # 2. KEY METRICS (KPIs)
     # Load history data to calculate KPIs
@@ -1722,63 +1730,6 @@ with tab4:
 # ==========================================
 # TAB 5: REKOMENDACJA NOWYCH INWESTYCJI
 # ==========================================
-
-def _comp_scores(c_z, c_wk, ev_ebitda, dy):
-    """Replicates the component scoring from StockwatchScraper.calculate_score."""
-    if c_z is None:
-        s_cz = 50.0
-    elif c_z < 0:
-        s_cz = 0.0
-    elif c_z < 5:
-        s_cz = 50.0
-    elif c_z <= 12:
-        s_cz = 100.0
-    elif c_z <= 20:
-        s_cz = 70.0
-    elif c_z <= 35:
-        s_cz = 40.0
-    else:
-        s_cz = 10.0
-
-    if c_wk is None:
-        s_cwk = 50.0
-    elif c_wk < 0:
-        s_cwk = 0.0
-    elif c_wk <= 1.0:
-        s_cwk = 100.0
-    elif c_wk <= 2.5:
-        s_cwk = 80.0
-    elif c_wk <= 4.0:
-        s_cwk = 50.0
-    else:
-        s_cwk = 20.0
-
-    if ev_ebitda is None:
-        s_ev = 50.0
-    elif ev_ebitda < 0:
-        s_ev = 0.0
-    elif ev_ebitda <= 6.0:
-        s_ev = 100.0
-    elif ev_ebitda <= 11.0:
-        s_ev = 75.0
-    elif ev_ebitda <= 16.0:
-        s_ev = 40.0
-    else:
-        s_ev = 15.0
-
-    if not dy or dy == 0.0:
-        s_dy = 0.0
-    elif dy < 2.0:
-        s_dy = 30.0
-    elif dy < 5.0:
-        s_dy = 70.0
-    elif dy <= 10.0:
-        s_dy = 100.0
-    else:
-        s_dy = 80.0
-
-    return s_cz, s_cwk, s_ev, s_dy
-
 
 def _horizon_score(item, horizon_label):
     s_cz, s_cwk, s_ev, s_dy = _comp_scores(
