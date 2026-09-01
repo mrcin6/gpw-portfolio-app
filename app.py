@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import json
+import contextlib
 import yfinance as yf
 from src.pdf_parser import parse_erste_pdf
 from src.stockwatch_scraper import StockwatchScraper, YFIN_TICKERS
@@ -124,7 +125,7 @@ SETTINGS_PATH        = _paths["settings"]
 ENTRY_PRICES_PATH    = _paths["entry"]
 DEPOSIT_HISTORY_PATH = _paths["deposits"]
 WATCHLIST_PATH       = _paths["watchlist"]
-ING_TRANSACTIONS_PATH = _paths["transactions"]
+TRANSACTIONS_PATH = _paths["transactions"]
 
 os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
@@ -377,6 +378,117 @@ def compute_ing_holdings(transactions: list) -> tuple:
             entry_prices[ticker] = avg_price
 
     return holdings, entry_prices
+
+
+def parse_bos_orders_pdf(pdf_path: str, account_label: str = "") -> list:
+    """
+    Parses DM BOŚ 'Historia zleceń' PDF (IKE or IKZE account).
+    Each transaction occupies 3 text lines:
+      Line 1: DD.MM.YYYY  TICKER  VALUE  DD.MM.YYYY
+      Line 2: ORDER_NR  K/S  QTY_PLACED  QTY_REAL  LIMIT  wykonane
+      Line 3: HH:MM:SS  MARKET  COMMISSION  VALIDITY
+    Returns list of transaction dicts compatible with merge_ing_transactions / compute_ing_holdings.
+    """
+    import pdfplumber
+    from datetime import datetime as _dt
+
+    LINE1 = re.compile(
+        r'^(\d{2}\.\d{2}\.\d{4})\s+(\S+)\s+(.*?)\s+(\d{2}\.\d{2}\.\d{4})\s*$'
+    )
+    LINE2 = re.compile(
+        r'^(\d{7,12})\s+([KS])\s+(\d+)\s+(\d+)\s+(\S+)\s+wykonane\s*$'
+    )
+
+    def _try_line1(line):
+        m = LINE1.match(line)
+        if not m:
+            return None
+        date_str, ticker, value_raw, _ = m.groups()
+        try:
+            value = float(value_raw.replace('\xa0', '').replace(' ', '').replace(',', '.'))
+            dt_obj = _dt.strptime(date_str, "%d.%m.%Y")
+            return {"date": dt_obj.strftime("%Y-%m-%d"), "ticker": ticker, "value": value}
+        except ValueError:
+            return None
+
+    all_lines = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            all_lines.extend(text.splitlines())
+
+    transactions = []
+    i = 0
+    while i < len(all_lines):
+        line = all_lines[i].strip()
+        if not line:
+            i += 1
+            continue
+
+        p1 = _try_line1(line)
+        if p1 is None:
+            i += 1
+            continue
+
+        # Find next non-empty line for LINE2
+        j = i + 1
+        while j < len(all_lines) and not all_lines[j].strip():
+            j += 1
+        if j >= len(all_lines):
+            break
+
+        m2 = LINE2.match(all_lines[j].strip())
+        if not m2:
+            i += 1
+            continue
+
+        order_nr, ks, _, qty_real, _ = m2.groups()
+        try:
+            qty = int(qty_real)
+        except ValueError:
+            i += 1
+            continue
+
+        # Find next non-empty line for LINE3 (time + commission)
+        k = j + 1
+        while k < len(all_lines) and not all_lines[k].strip():
+            k += 1
+        if k >= len(all_lines):
+            break
+
+        parts3 = all_lines[k].strip().split()
+        time_match = re.match(r'^\d{2}:\d{2}:\d{2}$', parts3[0]) if parts3 else None
+        if not time_match:
+            i += 1
+            continue
+
+        time_str = parts3[0]
+        try:
+            commission = float(parts3[-2].replace(',', '.')) if len(parts3) >= 3 else 0.0
+        except (ValueError, IndexError):
+            commission = 0.0
+
+        eff_price = round(p1["value"] / qty, 4) if qty > 0 else 0.0
+        datetime_iso = f"{p1['date']}T{time_str}"
+        # Order number is unique per order (not per execution), so key = order_nr + account
+        tx_key = f"{order_nr}|{account_label}"
+
+        transactions.append({
+            "key":      tx_key,
+            "datetime": datetime_iso,
+            "date":     p1["date"],
+            "order_id": order_nr,
+            "ticker":   p1["ticker"],
+            "type":     "Kupno" if ks == "K" else "Sprzedaż",
+            "quantity": qty,
+            "price":    eff_price,
+            "value":    p1["value"],
+            "fee":      commission,
+            "account":  account_label,
+        })
+        i = k + 1
+
+    return transactions
 
 
 def load_entry_prices(path=None):
@@ -1295,13 +1407,31 @@ with tab3:
     _portfolio_badge()
     
     # 1. WGRYWANIE DANYCH PORTFELA
-    _exp_label = "📥 Wgraj dane portfela" if selected_portfolio != "ing" else "📥 Wgraj / Edytuj dane portfela ING"
+    if selected_portfolio == "ing":
+        _exp_label = "📥 Wgraj / Edytuj dane portfela ING"
+    elif selected_portfolio == "ikze":
+        _exp_label = "📥 Wgraj Historię Zleceń DM BOŚ (IKE + IKZE)"
+    else:
+        _exp_label = "📥 Wgraj dane portfela"
     with st.expander(_exp_label):
-        _tab_labels = ["✏️ Ręczna edycja", "📄 CSV", "📑 PDF"] if selected_portfolio == "ing" else ["📄 CSV — Wykaz instrumentów (zalecane)", "📑 PDF — Raport kwartalny", "✏️ Ręczna edycja"]
-        _upload_tabs = st.tabs(_tab_labels)
-        upload_tab_manual = _upload_tabs[0] if selected_portfolio == "ing" else _upload_tabs[2]
-        upload_tab_csv    = _upload_tabs[1] if selected_portfolio == "ing" else _upload_tabs[0]
-        upload_tab_pdf    = _upload_tabs[2] if selected_portfolio == "ing" else _upload_tabs[1]
+        if selected_portfolio == "ing":
+            _tab_labels = ["✏️ Ręczna edycja", "📄 CSV", "📑 PDF"]
+            _upload_tabs = st.tabs(_tab_labels)
+            upload_tab_manual = _upload_tabs[0]
+            upload_tab_csv    = _upload_tabs[1]
+            upload_tab_pdf    = _upload_tabs[2]
+        elif selected_portfolio == "ikze":
+            _tab_labels = ["📑 Historia zleceń DM BOŚ (IKE + IKZE)", "✏️ Ręczna edycja"]
+            _upload_tabs = st.tabs(_tab_labels)
+            upload_tab_pdf    = _upload_tabs[0]
+            upload_tab_manual = _upload_tabs[1]
+            upload_tab_csv    = None
+        else:
+            _tab_labels = ["📄 CSV — Wykaz instrumentów (zalecane)", "📑 PDF — Raport kwartalny", "✏️ Ręczna edycja"]
+            _upload_tabs = st.tabs(_tab_labels)
+            upload_tab_csv    = _upload_tabs[0]
+            upload_tab_pdf    = _upload_tabs[1]
+            upload_tab_manual = _upload_tabs[2]
 
         # ── MANUAL EDITOR (primary for ING, fallback for others) ──────────────
         with upload_tab_manual:
@@ -1334,8 +1464,9 @@ with tab3:
                 st.success(f"Zapisano {len(_edited)} pozycji portfela {PORTFOLIO_NAMES[selected_portfolio]}!")
                 st.rerun()
 
-        # ── CSV UPLOADER ──────────────────────────────────────────────────────
-        with upload_tab_csv:
+        # ── CSV UPLOADER (nie dotyczy IKZE — nie ma eksportu CSV z DM BOŚ) ──
+        _csv_ctx = upload_tab_csv if upload_tab_csv is not None else contextlib.nullcontext()
+        with _csv_ctx:
             if selected_portfolio == "ing":
                 st.markdown("""
                 <div class="note-card">
@@ -1349,9 +1480,9 @@ with tab3:
                 </div>
                 """, unsafe_allow_html=True)
                 # Show existing transaction summary
-                if os.path.exists(ING_TRANSACTIONS_PATH):
+                if os.path.exists(TRANSACTIONS_PATH):
                     try:
-                        with open(ING_TRANSACTIONS_PATH, "r") as _f:
+                        with open(TRANSACTIONS_PATH, "r") as _f:
                             _existing_txs = json.load(_f)
                         _tx_dates = sorted({tx["date"] for tx in _existing_txs})
                         st.info(f"Baza transakcji ING: **{len(_existing_txs)}** rekordów, zakres dat: {_tx_dates[0] if _tx_dates else '—'} → {_tx_dates[-1] if _tx_dates else '—'}")
@@ -1376,7 +1507,7 @@ with tab3:
                                 st.error("Brak aktywnych pozycji po przetworzeniu transakcji. Sprawdź format pliku.")
                             else:
                                 # Save merged transaction history
-                                with open(ING_TRANSACTIONS_PATH, "w") as _f:
+                                with open(TRANSACTIONS_PATH, "w") as _f:
                                     json.dump(sorted(merged_txs, key=lambda t: t["datetime"]), _f, indent=2, ensure_ascii=False)
 
                                 # Save current holdings
@@ -1495,85 +1626,190 @@ with tab3:
                         except Exception as e:
                             st.error(f"Błąd przetwarzania CSV: {e}")
 
-        # ── PDF UPLOADER (fallback, privacy warning) ──────────────────────────
+        # ── PDF UPLOADER ───────────────────────────────────────────────────────
         with upload_tab_pdf:
-            st.markdown("""
-            <div class="note-card">
-              <div class="note-bar note-bar-warn"></div>
-              <div class="note-body" style="font-size:12px;">
-                ⚠️ <b>Ostrzeżenie o prywatności:</b> Raporty PDF z Erste BM mogą zawierać
-                numer rachunku, PESEL i inne dane osobowe. Plik jest przetwarzany tylko lokalnie
-                i nie jest zapisywany — ale przy deploymencie na Streamlit Cloud przechodzi przez
-                ich serwery. <b>Zalecane jest używanie wyciągu CSV zamiast PDF.</b>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
-            uploaded_file = st.file_uploader("Wybierz plik PDF wyciągu", type=["pdf"], key="pdf_uploader")
-            if uploaded_file is not None:
-                # Guard: process each file exactly once (prevents infinite rerun loop)
-                _pdf_id = f"{uploaded_file.name}_{uploaded_file.size}"
-                if st.session_state.get("_pdf_processed_id") == _pdf_id:
-                    st.success(f"Plik {uploaded_file.name} już wczytany — dane są aktualne.")
-                else:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                        tmp_file.write(uploaded_file.read())
-                        tmp_path = tmp_file.name
+            if selected_portfolio == "ikze":
+                # ── DM BOŚ Historia zleceń — dwa pliki: IKE + IKZE ────────────
+                st.markdown("""
+                <div class="note-card">
+                  <div class="note-bar note-bar-info"></div>
+                  <div class="note-body" style="font-size:12px;">
+                    Wgraj pliki <b>Historia zleceń</b> z DM BOŚ (online.bossa.pl → Historia zleceń → filtr: <em>wykonane</em> → Pobierz PDF).<br>
+                    Wgraj oba rachunki (IKE <b>i</b> IKZE) — transakcje zostaną scalone w jeden portfel.<br>
+                    Każdy import jest bezpieczny — duplikaty są automatycznie pomijane (deduplikacja po numerze zlecenia).
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
 
+                # Load existing transactions
+                if os.path.exists(TRANSACTIONS_PATH):
                     try:
-                        with st.spinner("Przetwarzanie raportu PDF..."):
-                            parsed_data = parse_erste_pdf(tmp_path)
+                        with open(TRANSACTIONS_PATH, "r") as _f:
+                            _existing_bos_txs = json.load(_f)
+                        _bos_dates = sorted({tx["date"] for tx in _existing_bos_txs})
+                        _ike_cnt  = sum(1 for t in _existing_bos_txs if t.get("account") == "IKE")
+                        _ikze_cnt = sum(1 for t in _existing_bos_txs if t.get("account") == "IKZE")
+                        st.info(f"Baza transakcji: **{len(_existing_bos_txs)}** rekordów (IKE: {_ike_cnt}, IKZE: {_ikze_cnt}), zakres: {_bos_dates[0] if _bos_dates else '—'} → {_bos_dates[-1] if _bos_dates else '—'}")
+                    except Exception:
+                        _existing_bos_txs = []
+                else:
+                    _existing_bos_txs = []
 
-                        if parsed_data["report_date"] is not None:
-                            rep_date = parsed_data["report_date"]
+                col_ike, col_ikze = st.columns(2)
+                with col_ike:
+                    st.markdown("**Rachunek IKE**")
+                    up_ike = st.file_uploader("Historia zleceń IKE", type=["pdf"], key="pdf_ike_uploader")
+                with col_ikze:
+                    st.markdown("**Rachunek IKZE**")
+                    up_ikze = st.file_uploader("Historia zleceń IKZE", type=["pdf"], key="pdf_ikze_uploader")
 
-                            df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
-                            df_history["Data"] = df_history["Data"].astype(str)
-
-                            val = parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"]
-
-                            new_row = {
-                                "Data": rep_date,
-                                "Wartość Całkowita (PLN)": val,
-                                "Wycena Akcji (PLN)": parsed_data["stocks_value"],
-                                "Gotówka (PLN)": parsed_data.get("cash_value", parsed_data.get("cash_val", 0.0)),
-                                "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
-                                "Zysk (PLN)": round(val - settings["total_deposits"], 2),
-                            }
-
-                            if rep_date in df_history["Data"].values:
-                                for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
-                                    df_history.loc[df_history["Data"] == rep_date, col] = new_row[col]
-                            else:
-                                df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
-                                df_history = df_history.sort_values(by="Data").reset_index(drop=True)
-
-                            df_history.to_csv(HISTORY_PATH, index=False)
-
-                            if parsed_data["holdings"]:
-                                holdings_list = []
-                                total_stocks = parsed_data["stocks_value"] or sum(h["valuation"] for h in parsed_data["holdings"]) or 1.0
-                                for h in parsed_data["holdings"]:
-                                    holdings_list.append({
-                                        "Spółka": h["ticker"],
-                                        "Ilość": h["quantity"],
-                                        "Kurs (PLN)": h["price"],
-                                        "Wycena (PLN)": h["valuation"],
-                                        "Udział (%)": round((h["valuation"] / total_stocks) * 100, 2),
-                                    })
-                                pd.DataFrame(holdings_list).sort_values(by="Wycena (PLN)", ascending=False).reset_index(drop=True).to_csv(HOLDINGS_PATH, index=False)
-
-                            st.success(f"Wczytano raport z dnia {rep_date}!")
-                            st.session_state["_pdf_processed_id"] = _pdf_id
-                            st.session_state.pop("live_prices", None)
-                            st.session_state.pop("live_sources", None)
-                            st.rerun()
-                        else:
-                            st.error("Nie udało się sparsować raportu. Upewnij się, że wgrywasz poprawny wyciąg z Erste BM.")
-                    except Exception as e:
-                        st.error(f"Wystąpił błąd podczas przetwarzania pliku PDF: {str(e)}")
+                def _process_bos_pdf(uploaded, account_label, existing_txs):
+                    """Parse one DM BOŚ PDF, merge into existing transactions, save and return merged list."""
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_f:
+                        tmp_f.write(uploaded.read())
+                        tmp_path = tmp_f.name
+                    try:
+                        new_txs = parse_bos_orders_pdf(tmp_path, account_label)
+                        merged, added = merge_ing_transactions(existing_txs, new_txs)
+                        return merged, added, len(new_txs)
                     finally:
                         if os.path.exists(tmp_path):
                             os.remove(tmp_path)
+
+                def _save_bos_holdings(merged_txs):
+                    """Recompute holdings from all transactions and persist."""
+                    holdings_h, entry_prices_h = compute_ing_holdings(merged_txs)
+                    with open(TRANSACTIONS_PATH, "w") as _f:
+                        json.dump(sorted(merged_txs, key=lambda t: t["datetime"]), _f, indent=2, ensure_ascii=False)
+                    if not holdings_h:
+                        return 0, 0.0
+                    stocks_val = sum(h["valuation"] for h in holdings_h)
+                    total_s = stocks_val or 1.0
+                    rows = []
+                    for h in sorted(holdings_h, key=lambda x: -x["valuation"]):
+                        rows.append({
+                            "Spółka": h["ticker"],
+                            "Ilość": h["quantity"],
+                            "Kurs (PLN)": h["price"],
+                            "Wycena (PLN)": h["valuation"],
+                            "Udział (%)": round(h["valuation"] / total_s * 100, 2),
+                        })
+                    pd.DataFrame(rows).to_csv(HOLDINGS_PATH, index=False)
+                    if entry_prices_h:
+                        save_entry_prices(entry_prices_h, source="csv")
+                    rep_date = pd.Timestamp.today().strftime("%Y-%m-%d")
+                    df_hist = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
+                    df_hist["Data"] = df_hist["Data"].astype(str)
+                    new_hist = {"Data": rep_date, "Wartość Całkowita (PLN)": stocks_val, "Wycena Akcji (PLN)": stocks_val, "Gotówka (PLN)": 0.0, "Wpłaty Skumulowane (PLN)": settings["total_deposits"], "Zysk (PLN)": round(stocks_val - settings["total_deposits"], 2)}
+                    if rep_date in df_hist["Data"].values:
+                        for col in new_hist:
+                            if col != "Data":
+                                df_hist.loc[df_hist["Data"] == rep_date, col] = new_hist[col]
+                    else:
+                        df_hist = pd.concat([df_hist, pd.DataFrame([new_hist])], ignore_index=True).sort_values("Data").reset_index(drop=True)
+                    df_hist.to_csv(HISTORY_PATH, index=False)
+                    return len(holdings_h), stocks_val
+
+                # Process IKE PDF
+                if up_ike is not None:
+                    _ike_id = f"ike_{up_ike.name}_{up_ike.size}"
+                    if st.session_state.get("_bos_ike_processed_id") == _ike_id:
+                        st.success(f"IKE: {up_ike.name} już wczytany.")
+                    else:
+                        try:
+                            with st.spinner("Przetwarzanie IKE PDF..."):
+                                _cur_txs = _existing_bos_txs[:]
+                                merged_txs, added, total_new = _process_bos_pdf(up_ike, "IKE", _cur_txs)
+                                pos_count, stocks_val = _save_bos_holdings(merged_txs)
+                            dup = total_new - added
+                            st.success(f"IKE: dodano {added} nowych zleceń ({dup} duplikatów pominięto). Portfel: {pos_count} pozycji, {stocks_val:,.2f} PLN.")
+                            st.session_state["_bos_ike_processed_id"] = _ike_id
+                            st.session_state.pop("live_prices", None)
+                            st.session_state.pop("live_sources", None)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Błąd przetwarzania IKE PDF: {e}")
+
+                # Process IKZE PDF
+                if up_ikze is not None:
+                    _ikze_id = f"ikze_{up_ikze.name}_{up_ikze.size}"
+                    if st.session_state.get("_bos_ikze_processed_id") == _ikze_id:
+                        st.success(f"IKZE: {up_ikze.name} już wczytany.")
+                    else:
+                        try:
+                            # Reload transactions in case IKE was just processed
+                            _cur_txs2 = []
+                            if os.path.exists(TRANSACTIONS_PATH):
+                                with open(TRANSACTIONS_PATH) as _f2:
+                                    _cur_txs2 = json.load(_f2)
+                            with st.spinner("Przetwarzanie IKZE PDF..."):
+                                merged_txs2, added2, total_new2 = _process_bos_pdf(up_ikze, "IKZE", _cur_txs2)
+                                pos_count2, stocks_val2 = _save_bos_holdings(merged_txs2)
+                            dup2 = total_new2 - added2
+                            st.success(f"IKZE: dodano {added2} nowych zleceń ({dup2} duplikatów pominięto). Portfel: {pos_count2} pozycji, {stocks_val2:,.2f} PLN.")
+                            st.session_state["_bos_ikze_processed_id"] = _ikze_id
+                            st.session_state.pop("live_prices", None)
+                            st.session_state.pop("live_sources", None)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Błąd przetwarzania IKZE PDF: {e}")
+
+            else:
+                # ── Erste BM PDF (fallback for erste; ING doesn't use this path) ──
+                st.markdown("""
+                <div class="note-card">
+                  <div class="note-bar note-bar-warn"></div>
+                  <div class="note-body" style="font-size:12px;">
+                    ⚠️ <b>Ostrzeżenie o prywatności:</b> Raporty PDF z Erste BM mogą zawierać
+                    numer rachunku, PESEL i inne dane osobowe. Plik jest przetwarzany tylko lokalnie
+                    i nie jest zapisywany — ale przy deploymencie na Streamlit Cloud przechodzi przez
+                    ich serwery. <b>Zalecane jest używanie wyciągu CSV zamiast PDF.</b>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+                uploaded_file = st.file_uploader("Wybierz plik PDF wyciągu", type=["pdf"], key="pdf_uploader")
+                if uploaded_file is not None:
+                    _pdf_id = f"{uploaded_file.name}_{uploaded_file.size}"
+                    if st.session_state.get("_pdf_processed_id") == _pdf_id:
+                        st.success(f"Plik {uploaded_file.name} już wczytany — dane są aktualne.")
+                    else:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                            tmp_file.write(uploaded_file.read())
+                            tmp_path = tmp_file.name
+                        try:
+                            with st.spinner("Przetwarzanie raportu PDF..."):
+                                parsed_data = parse_erste_pdf(tmp_path)
+                            if parsed_data["report_date"] is not None:
+                                rep_date = parsed_data["report_date"]
+                                df_history = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
+                                df_history["Data"] = df_history["Data"].astype(str)
+                                val = parsed_data["total_value"] if parsed_data["total_value"] is not None else parsed_data["stocks_value"]
+                                new_row = {"Data": rep_date, "Wartość Całkowita (PLN)": val, "Wycena Akcji (PLN)": parsed_data["stocks_value"], "Gotówka (PLN)": parsed_data.get("cash_value", parsed_data.get("cash_val", 0.0)), "Wpłaty Skumulowane (PLN)": settings["total_deposits"], "Zysk (PLN)": round(val - settings["total_deposits"], 2)}
+                                if rep_date in df_history["Data"].values:
+                                    for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
+                                        df_history.loc[df_history["Data"] == rep_date, col] = new_row[col]
+                                else:
+                                    df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
+                                    df_history = df_history.sort_values(by="Data").reset_index(drop=True)
+                                df_history.to_csv(HISTORY_PATH, index=False)
+                                if parsed_data["holdings"]:
+                                    holdings_list = []
+                                    total_stocks = parsed_data["stocks_value"] or sum(h["valuation"] for h in parsed_data["holdings"]) or 1.0
+                                    for h in parsed_data["holdings"]:
+                                        holdings_list.append({"Spółka": h["ticker"], "Ilość": h["quantity"], "Kurs (PLN)": h["price"], "Wycena (PLN)": h["valuation"], "Udział (%)": round((h["valuation"] / total_stocks) * 100, 2)})
+                                    pd.DataFrame(holdings_list).sort_values(by="Wycena (PLN)", ascending=False).reset_index(drop=True).to_csv(HOLDINGS_PATH, index=False)
+                                st.success(f"Wczytano raport z dnia {rep_date}!")
+                                st.session_state["_pdf_processed_id"] = _pdf_id
+                                st.session_state.pop("live_prices", None)
+                                st.session_state.pop("live_sources", None)
+                                st.rerun()
+                            else:
+                                st.error("Nie udało się sparsować raportu. Upewnij się, że wgrywasz poprawny wyciąg z Erste BM.")
+                        except Exception as e:
+                            st.error(f"Wystąpił błąd podczas przetwarzania pliku PDF: {str(e)}")
+                        finally:
+                            if os.path.exists(tmp_path):
+                                os.remove(tmp_path)
 
     # 2. KEY METRICS (KPIs)
     # Load history data to calculate KPIs
