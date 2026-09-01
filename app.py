@@ -40,13 +40,14 @@ def get_paths(portfolio: str) -> dict:
     base = os.path.join(BASE_DIR, "data", portfolio)
     os.makedirs(base, exist_ok=True)
     return {
-        "holdings":  os.path.join(base, "current_holdings.csv"),
-        "history":   os.path.join(base, "portfolio_history.csv"),
-        "entry":     os.path.join(base, "entry_prices.json"),
-        "deposits":  os.path.join(base, "deposit_history.json"),
-        "settings":  os.path.join(base, "portfolio_settings.json"),
-        "alerts":    os.path.join(base, "stockwatch_alerts.json"),
-        "watchlist": os.path.join(BASE_DIR, "config", f"{portfolio}_watchlist.json"),
+        "holdings":     os.path.join(base, "current_holdings.csv"),
+        "history":      os.path.join(base, "portfolio_history.csv"),
+        "entry":        os.path.join(base, "entry_prices.json"),
+        "deposits":     os.path.join(base, "deposit_history.json"),
+        "settings":     os.path.join(base, "portfolio_settings.json"),
+        "alerts":       os.path.join(base, "stockwatch_alerts.json"),
+        "watchlist":    os.path.join(BASE_DIR, "config", f"{portfolio}_watchlist.json"),
+        "transactions": os.path.join(base, "transactions.json"),
     }
 
 
@@ -123,6 +124,7 @@ SETTINGS_PATH        = _paths["settings"]
 ENTRY_PRICES_PATH    = _paths["entry"]
 DEPOSIT_HISTORY_PATH = _paths["deposits"]
 WATCHLIST_PATH       = _paths["watchlist"]
+ING_TRANSACTIONS_PATH = _paths["transactions"]
 
 os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
@@ -251,6 +253,130 @@ def parse_erste_csv(file_obj):
 
     stocks_value = sum(h["valuation"] for h in holdings)
     return holdings, entry_prices, stocks_value
+
+
+def parse_ing_transactions_csv(file_obj):
+    """
+    Parses ING historiaTransakcji_*.csv (semicolon-delimited, Polish locale, no header).
+    Columns: Data;NrZamówienia;Ticker;Typ;Ilość;Cena;Wartość;Prowizja;ŁącznaWartość
+    Returns list of transaction dicts ready for merge_ing_transactions().
+    """
+    import io as _io
+    from datetime import datetime as _dt
+
+    raw = file_obj.read()
+    for enc in ("utf-8-sig", "utf-8", "cp1250", "iso-8859-2"):
+        try:
+            content = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            content = None
+    if content is None:
+        raise ValueError("Nie można odczytać pliku CSV — nieznane kodowanie.")
+
+    def _num(val):
+        s = str(val).strip().replace("\xa0", "").replace(" ", "").replace(" ", "").replace(" ", "").replace(",", ".")
+        if not s or s in ("-", "nan"):
+            return 0.0
+        return float(s)
+
+    transactions = []
+    for line in content.strip().splitlines():
+        parts = line.split(";")
+        if len(parts) < 9:
+            continue
+        dt_raw, order_id, ticker, typ = parts[0].strip(), parts[1].strip(), parts[2].strip(), parts[3].strip()
+        qty_raw, price_raw, value_raw, fee_raw = parts[4], parts[5], parts[6], parts[7]
+
+        if not ticker or not dt_raw:
+            continue
+        try:
+            dt_obj = _dt.strptime(dt_raw, "%d-%m-%Y %H:%M:%S")
+        except ValueError:
+            continue
+
+        datetime_iso = dt_obj.strftime("%Y-%m-%dT%H:%M:%S")
+        date_iso = dt_obj.strftime("%Y-%m-%d")
+
+        try:
+            qty = int(round(_num(qty_raw)))
+            price = _num(price_raw)
+            value = _num(value_raw)
+            fee = _num(fee_raw)
+        except (ValueError, TypeError):
+            continue
+
+        if qty <= 0 or not ticker:
+            continue
+
+        tx_key = f"{datetime_iso}|{order_id}|{ticker}|{typ}|{qty}"
+        transactions.append({
+            "key":      tx_key,
+            "datetime": datetime_iso,
+            "date":     date_iso,
+            "order_id": order_id,
+            "ticker":   ticker,
+            "type":     typ,
+            "quantity": qty,
+            "price":    price,
+            "value":    value,
+            "fee":      fee,
+        })
+    return transactions
+
+
+def merge_ing_transactions(existing: list, new_txs: list) -> tuple:
+    """Merge new transactions into existing list, deduplicating by key. Returns (merged, added_count)."""
+    existing_keys = {tx["key"] for tx in existing}
+    added = [tx for tx in new_txs if tx["key"] not in existing_keys]
+    return existing + added, len(added)
+
+
+def compute_ing_holdings(transactions: list) -> tuple:
+    """
+    Aggregate ING transaction history into current holdings.
+    Returns (holdings_list, entry_prices_dict).
+    holdings_list items: {ticker, quantity, price (avg buy), valuation}
+    entry_prices_dict: {ticker: avg_buy_price}
+    """
+    from collections import defaultdict
+
+    pos = defaultdict(lambda: {"qty": 0, "buy_cost": 0.0, "buy_qty": 0})
+
+    for tx in sorted(transactions, key=lambda t: t["datetime"]):
+        ticker = tx["ticker"]
+        qty = tx["quantity"]
+        price = tx["price"]
+
+        if tx["type"] == "Kupno":
+            pos[ticker]["qty"] += qty
+            pos[ticker]["buy_cost"] += qty * price
+            pos[ticker]["buy_qty"] += qty
+        elif "Sprzeda" in tx["type"]:
+            sell_qty = min(qty, pos[ticker]["qty"])
+            if pos[ticker]["buy_qty"] > 0 and sell_qty > 0:
+                ratio = sell_qty / pos[ticker]["buy_qty"]
+                pos[ticker]["buy_cost"] = max(0.0, pos[ticker]["buy_cost"] - ratio * pos[ticker]["buy_cost"])
+                pos[ticker]["buy_qty"] = max(0, pos[ticker]["buy_qty"] - sell_qty)
+            pos[ticker]["qty"] = max(0, pos[ticker]["qty"] - sell_qty)
+
+    holdings = []
+    entry_prices = {}
+    for ticker, p in pos.items():
+        qty = p["qty"]
+        if qty <= 0:
+            continue
+        avg_price = round(p["buy_cost"] / p["buy_qty"], 4) if p["buy_qty"] > 0 else 0.0
+        holdings.append({
+            "ticker":   ticker,
+            "quantity": qty,
+            "price":    avg_price,
+            "valuation": round(qty * avg_price, 2),
+        })
+        if avg_price > 0:
+            entry_prices[ticker] = avg_price
+
+    return holdings, entry_prices
 
 
 def load_entry_prices(path=None):
@@ -1208,78 +1334,166 @@ with tab3:
                 st.success(f"Zapisano {len(_edited)} pozycji portfela {PORTFOLIO_NAMES[selected_portfolio]}!")
                 st.rerun()
 
-        # ── CSV UPLOADER (primary, privacy-safe) ──────────────────────────────
+        # ── CSV UPLOADER ──────────────────────────────────────────────────────
         with upload_tab_csv:
-            st.markdown("""
-            <div class="note-card">
-              <div class="note-bar note-bar-info"></div>
-              <div class="note-body" style="font-size:12px;">
-                Wgraj plik <b>Instrumenty_finansowe_raport_*.csv</b> z Erste BM.<br>
-                CSV nie zawiera danych osobowych (PESEL, numer rachunku) — jest bezpieczny dla repozytorium.<br>
-                <b>Bonus:</b> kolumna <em>Średni kurs nabycia</em> zostanie automatycznie wczytana jako ceny wejścia w Tab 2.
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
-            uploaded_csv = st.file_uploader("Wybierz plik CSV", type=["csv"], key="csv_uploader")
-            if uploaded_csv is not None:
-                # Guard: process each file exactly once (prevents infinite rerun loop)
-                _csv_id = f"{uploaded_csv.name}_{uploaded_csv.size}"
-                if st.session_state.get("_csv_processed_id") == _csv_id:
-                    st.success(f"Plik {uploaded_csv.name} już wczytany — dane są aktualne.")
-                else:
+            if selected_portfolio == "ing":
+                st.markdown("""
+                <div class="note-card">
+                  <div class="note-bar note-bar-info"></div>
+                  <div class="note-body" style="font-size:12px;">
+                    Wgraj plik <b>historiaTransakcji_*.csv</b> z ING Banku (Moje Finanse → Makler → Historia transakcji → Eksport CSV).<br>
+                    Format: <em>Data;NrZamówienia;Ticker;Typ;Ilość;Cena;Wartość;Prowizja;ŁącznaWartość</em><br>
+                    Transakcje są porównywane po dacie, numerze zamówienia, tickerze i ilości — duplikaty są automatycznie pomijane.<br>
+                    <b>Bonus:</b> średnia cena nabycia wyliczana z historii transakcji jest automatycznie wczytana jako cena wejścia w Tab 2.
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+                # Show existing transaction summary
+                if os.path.exists(ING_TRANSACTIONS_PATH):
                     try:
-                        with st.spinner("Przetwarzanie pliku CSV..."):
-                            holdings_csv, entry_prices_csv, stocks_val_csv = parse_erste_csv(uploaded_csv)
+                        with open(ING_TRANSACTIONS_PATH, "r") as _f:
+                            _existing_txs = json.load(_f)
+                        _tx_dates = sorted({tx["date"] for tx in _existing_txs})
+                        st.info(f"Baza transakcji ING: **{len(_existing_txs)}** rekordów, zakres dat: {_tx_dates[0] if _tx_dates else '—'} → {_tx_dates[-1] if _tx_dates else '—'}")
+                    except Exception:
+                        _existing_txs = []
+                else:
+                    _existing_txs = []
 
-                        if not holdings_csv:
-                            st.error("Nie znaleziono pozycji w pliku CSV. Sprawdź format pliku.")
-                        else:
-                            fname = uploaded_csv.name
-                            date_m = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
-                            rep_date_csv = date_m.group(1) if date_m else pd.Timestamp.today().strftime("%Y-%m-%d")
+                uploaded_csv = st.file_uploader("Wybierz plik historiaTransakcji_*.csv", type=["csv"], key="csv_uploader")
+                if uploaded_csv is not None:
+                    _csv_id = f"{uploaded_csv.name}_{uploaded_csv.size}"
+                    if st.session_state.get("_csv_processed_id") == _csv_id:
+                        st.success(f"Plik {uploaded_csv.name} już wczytany — dane są aktualne.")
+                    else:
+                        try:
+                            with st.spinner("Przetwarzanie historii transakcji ING..."):
+                                new_txs = parse_ing_transactions_csv(uploaded_csv)
+                                merged_txs, added_count = merge_ing_transactions(_existing_txs, new_txs)
+                                holdings_csv, entry_prices_csv = compute_ing_holdings(merged_txs)
 
-                            total_s = stocks_val_csv if stocks_val_csv else 1.0
-                            holdings_rows = []
-                            for h in sorted(holdings_csv, key=lambda x: -x["valuation"]):
-                                holdings_rows.append({
-                                    "Spółka": h["ticker"],
-                                    "Ilość": h["quantity"],
-                                    "Kurs (PLN)": h["price"],
-                                    "Wycena (PLN)": h["valuation"],
-                                    "Udział (%)": round(h["valuation"] / total_s * 100, 2),
-                                })
-                            pd.DataFrame(holdings_rows).to_csv(HOLDINGS_PATH, index=False)
-
-                            if entry_prices_csv:
-                                save_entry_prices(entry_prices_csv, source="csv")
-
-                            df_hist = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
-                            df_hist["Data"] = df_hist["Data"].astype(str)
-                            new_hist_row = {
-                                "Data": rep_date_csv,
-                                "Wartość Całkowita (PLN)": stocks_val_csv,
-                                "Wycena Akcji (PLN)": stocks_val_csv,
-                                "Gotówka (PLN)": 0.0,
-                                "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
-                                "Zysk (PLN)": round(stocks_val_csv - settings["total_deposits"], 2),
-                            }
-                            if rep_date_csv in df_hist["Data"].values:
-                                for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
-                                    df_hist.loc[df_hist["Data"] == rep_date_csv, col] = new_hist_row[col]
+                            if not holdings_csv:
+                                st.error("Brak aktywnych pozycji po przetworzeniu transakcji. Sprawdź format pliku.")
                             else:
-                                df_hist = pd.concat([df_hist, pd.DataFrame([new_hist_row])], ignore_index=True)
-                                df_hist = df_hist.sort_values(by="Data").reset_index(drop=True)
-                            df_hist.to_csv(HISTORY_PATH, index=False)
+                                # Save merged transaction history
+                                with open(ING_TRANSACTIONS_PATH, "w") as _f:
+                                    json.dump(sorted(merged_txs, key=lambda t: t["datetime"]), _f, indent=2, ensure_ascii=False)
 
-                            ep_info = f" Wczytano {len(entry_prices_csv)} cen wejścia." if entry_prices_csv else ""
-                            st.success(f"Wczytano {rep_date_csv} — {len(holdings_csv)} spółek, {stocks_val_csv:,.2f} PLN.{ep_info}")
-                            st.session_state["_csv_processed_id"] = _csv_id
-                            # Invalidate stale live-price cache so Tab 2 refreshes on next visit
-                            st.session_state.pop("live_prices", None)
-                            st.session_state.pop("live_sources", None)
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Błąd przetwarzania CSV: {e}")
+                                # Save current holdings
+                                stocks_val_csv = sum(h["valuation"] for h in holdings_csv)
+                                total_s = stocks_val_csv or 1.0
+                                holdings_rows = []
+                                for h in sorted(holdings_csv, key=lambda x: -x["valuation"]):
+                                    holdings_rows.append({
+                                        "Spółka": h["ticker"],
+                                        "Ilość": h["quantity"],
+                                        "Kurs (PLN)": h["price"],
+                                        "Wycena (PLN)": h["valuation"],
+                                        "Udział (%)": round(h["valuation"] / total_s * 100, 2),
+                                    })
+                                pd.DataFrame(holdings_rows).to_csv(HOLDINGS_PATH, index=False)
+
+                                if entry_prices_csv:
+                                    save_entry_prices(entry_prices_csv, source="csv")
+
+                                # Update portfolio history with today's date
+                                rep_date_csv = pd.Timestamp.today().strftime("%Y-%m-%d")
+                                df_hist = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
+                                df_hist["Data"] = df_hist["Data"].astype(str)
+                                new_hist_row = {
+                                    "Data": rep_date_csv,
+                                    "Wartość Całkowita (PLN)": stocks_val_csv,
+                                    "Wycena Akcji (PLN)": stocks_val_csv,
+                                    "Gotówka (PLN)": 0.0,
+                                    "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
+                                    "Zysk (PLN)": round(stocks_val_csv - settings["total_deposits"], 2),
+                                }
+                                if rep_date_csv in df_hist["Data"].values:
+                                    for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
+                                        df_hist.loc[df_hist["Data"] == rep_date_csv, col] = new_hist_row[col]
+                                else:
+                                    df_hist = pd.concat([df_hist, pd.DataFrame([new_hist_row])], ignore_index=True)
+                                    df_hist = df_hist.sort_values(by="Data").reset_index(drop=True)
+                                df_hist.to_csv(HISTORY_PATH, index=False)
+
+                                ep_info = f" Ceny wejścia: {len(entry_prices_csv)} spółek." if entry_prices_csv else ""
+                                dup_info = f" Pominięto {len(new_txs) - added_count} duplikatów." if len(new_txs) - added_count > 0 else ""
+                                st.success(f"Dodano {added_count} nowych transakcji ({len(merged_txs)} łącznie). Portfel: {len(holdings_csv)} pozycji, {stocks_val_csv:,.2f} PLN.{ep_info}{dup_info}")
+                                st.session_state["_csv_processed_id"] = _csv_id
+                                st.session_state.pop("live_prices", None)
+                                st.session_state.pop("live_sources", None)
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Błąd przetwarzania historii transakcji ING: {e}")
+            else:
+                st.markdown("""
+                <div class="note-card">
+                  <div class="note-bar note-bar-info"></div>
+                  <div class="note-body" style="font-size:12px;">
+                    Wgraj plik <b>Instrumenty_finansowe_raport_*.csv</b> z Erste BM.<br>
+                    CSV nie zawiera danych osobowych (PESEL, numer rachunku) — jest bezpieczny dla repozytorium.<br>
+                    <b>Bonus:</b> kolumna <em>Średni kurs nabycia</em> zostanie automatycznie wczytana jako ceny wejścia w Tab 2.
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+                uploaded_csv = st.file_uploader("Wybierz plik CSV", type=["csv"], key="csv_uploader")
+                if uploaded_csv is not None:
+                    _csv_id = f"{uploaded_csv.name}_{uploaded_csv.size}"
+                    if st.session_state.get("_csv_processed_id") == _csv_id:
+                        st.success(f"Plik {uploaded_csv.name} już wczytany — dane są aktualne.")
+                    else:
+                        try:
+                            with st.spinner("Przetwarzanie pliku CSV..."):
+                                holdings_csv, entry_prices_csv, stocks_val_csv = parse_erste_csv(uploaded_csv)
+
+                            if not holdings_csv:
+                                st.error("Nie znaleziono pozycji w pliku CSV. Sprawdź format pliku.")
+                            else:
+                                fname = uploaded_csv.name
+                                date_m = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
+                                rep_date_csv = date_m.group(1) if date_m else pd.Timestamp.today().strftime("%Y-%m-%d")
+
+                                total_s = stocks_val_csv if stocks_val_csv else 1.0
+                                holdings_rows = []
+                                for h in sorted(holdings_csv, key=lambda x: -x["valuation"]):
+                                    holdings_rows.append({
+                                        "Spółka": h["ticker"],
+                                        "Ilość": h["quantity"],
+                                        "Kurs (PLN)": h["price"],
+                                        "Wycena (PLN)": h["valuation"],
+                                        "Udział (%)": round(h["valuation"] / total_s * 100, 2),
+                                    })
+                                pd.DataFrame(holdings_rows).to_csv(HOLDINGS_PATH, index=False)
+
+                                if entry_prices_csv:
+                                    save_entry_prices(entry_prices_csv, source="csv")
+
+                                df_hist = pd.read_csv(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else pd.DataFrame(columns=["Data", "Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"])
+                                df_hist["Data"] = df_hist["Data"].astype(str)
+                                new_hist_row = {
+                                    "Data": rep_date_csv,
+                                    "Wartość Całkowita (PLN)": stocks_val_csv,
+                                    "Wycena Akcji (PLN)": stocks_val_csv,
+                                    "Gotówka (PLN)": 0.0,
+                                    "Wpłaty Skumulowane (PLN)": settings["total_deposits"],
+                                    "Zysk (PLN)": round(stocks_val_csv - settings["total_deposits"], 2),
+                                }
+                                if rep_date_csv in df_hist["Data"].values:
+                                    for col in ["Wartość Całkowita (PLN)", "Wycena Akcji (PLN)", "Gotówka (PLN)", "Wpłaty Skumulowane (PLN)", "Zysk (PLN)"]:
+                                        df_hist.loc[df_hist["Data"] == rep_date_csv, col] = new_hist_row[col]
+                                else:
+                                    df_hist = pd.concat([df_hist, pd.DataFrame([new_hist_row])], ignore_index=True)
+                                    df_hist = df_hist.sort_values(by="Data").reset_index(drop=True)
+                                df_hist.to_csv(HISTORY_PATH, index=False)
+
+                                ep_info = f" Wczytano {len(entry_prices_csv)} cen wejścia." if entry_prices_csv else ""
+                                st.success(f"Wczytano {rep_date_csv} — {len(holdings_csv)} spółek, {stocks_val_csv:,.2f} PLN.{ep_info}")
+                                st.session_state["_csv_processed_id"] = _csv_id
+                                st.session_state.pop("live_prices", None)
+                                st.session_state.pop("live_sources", None)
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Błąd przetwarzania CSV: {e}")
 
         # ── PDF UPLOADER (fallback, privacy warning) ──────────────────────────
         with upload_tab_pdf:
