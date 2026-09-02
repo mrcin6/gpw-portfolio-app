@@ -48,7 +48,8 @@ def get_paths(portfolio: str) -> dict:
         "settings":     os.path.join(base, "portfolio_settings.json"),
         "alerts":       os.path.join(base, "stockwatch_alerts.json"),
         "watchlist":    os.path.join(BASE_DIR, "config", f"{portfolio}_watchlist.json"),
-        "transactions": os.path.join(base, "transactions.json"),
+        "transactions":    os.path.join(base, "transactions.json"),
+        "live_cache":      os.path.join(base, "live_prices_cache.json"),
     }
 
 
@@ -125,7 +126,8 @@ SETTINGS_PATH        = _paths["settings"]
 ENTRY_PRICES_PATH    = _paths["entry"]
 DEPOSIT_HISTORY_PATH = _paths["deposits"]
 WATCHLIST_PATH       = _paths["watchlist"]
-TRANSACTIONS_PATH = _paths["transactions"]
+TRANSACTIONS_PATH  = _paths["transactions"]
+LIVE_CACHE_PATH    = _paths["live_cache"]
 
 os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
@@ -1139,11 +1141,27 @@ with tab2:
           </div>
         </div>""", unsafe_allow_html=True)
     else:
-        # Initialize live prices from the holdings CSV (purchase price as default)
+        # Initialize live prices: prefer disk cache (survives browser refresh), fall back to holdings CSV
         if "live_prices" not in st.session_state or not st.session_state["live_prices"]:
-            st.session_state["live_prices"] = {row["Spółka"]: row["Kurs (PLN)"] for _, row in df_holdings.iterrows()}
+            _loaded_from_cache = False
+            if os.path.exists(LIVE_CACHE_PATH):
+                try:
+                    with open(LIVE_CACHE_PATH) as _lcf:
+                        _lc = json.load(_lcf)
+                    _cached_prices = _lc.get("prices", {})
+                    _cached_sources = _lc.get("sources", {})
+                    _current_tickers = set(df_holdings["Spółka"].unique())
+                    if _cached_prices and _current_tickers.issubset(set(_cached_prices.keys())):
+                        st.session_state["live_prices"] = _cached_prices
+                        st.session_state["live_sources"] = _cached_sources
+                        _loaded_from_cache = True
+                except Exception:
+                    pass
+            if not _loaded_from_cache:
+                st.session_state["live_prices"] = {row["Spółka"]: row["Kurs (PLN)"] for _, row in df_holdings.iterrows()}
+                st.session_state["live_sources"] = {row["Spółka"]: "Cena zakupu" for _, row in df_holdings.iterrows()}
         if "live_sources" not in st.session_state:
-            st.session_state["live_sources"] = {row["Spółka"]: "Cena zakupu (PDF)" for _, row in df_holdings.iterrows()}
+            st.session_state["live_sources"] = {row["Spółka"]: "Cena zakupu" for _, row in df_holdings.iterrows()}
 
         st.markdown("""
         <div class="note-card">
@@ -1171,7 +1189,7 @@ with tab2:
                         value=float(default_val),
                         step=0.01,
                         format="%.2f",
-                        key=f"ep_{ticker}"
+                        key=f"ep_{selected_portfolio}_{ticker}"
                     )
             if st.button("💾 Zapisz Ceny Wejścia", use_container_width=True):
                 save_entry_prices(ep_inputs, source="manual")
@@ -1187,16 +1205,22 @@ with tab2:
                     indicators = scraper_strat.get_indicators(ticker)
                     price = indicators.get("price")
                     source = indicators.get("source", "")
-                    if price and "Lokalna" not in source:
+                    if price:
                         live_prices[ticker] = float(price)
                         live_sources[ticker] = source
                     else:
                         live_prices[ticker] = float(
                             df_holdings.loc[df_holdings["Spółka"] == ticker, "Kurs (PLN)"].values[0]
                         )
-                        live_sources[ticker] = "Cena zakupu (PDF)"
+                        live_sources[ticker] = "Cena zakupu"
                 st.session_state["live_prices"] = live_prices
                 st.session_state["live_sources"] = live_sources
+                try:
+                    with open(LIVE_CACHE_PATH, "w") as _lf:
+                        json.dump({"prices": live_prices, "sources": live_sources,
+                                   "updated": pd.Timestamp.now().isoformat()}, _lf)
+                except Exception:
+                    pass
                 st.success("Zaktualizowano kursy!")
                 st.rerun()
 

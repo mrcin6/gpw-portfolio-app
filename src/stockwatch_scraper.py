@@ -113,9 +113,18 @@ YFIN_TICKERS = {
     "CREOTECH":  "CRE.WA",
     "DATAWALK":  "DTW.WA",
     "ONDE":      "OND.WA",
-    # No Yahoo mapping for: CYBERFLKS, ELEKTROTI, MEDINICE, BIOCELTIX,
-    # PATENTUS, ZABKA, DIAG, SCANWAY, ERSTE, GETIN, KLEPSYDRA, ETFBSPXPL, ETFBW20TR
-    # → Biznesradar L2 handles these via GPW ticker directly
+    # IKE/IKZE portfolio tickers
+    "DINOPL":    "DNP.WA",
+    "ASSECOPOL": "ACP.WA",
+    "CYFRPLSAT": "CPS.WA",
+    "GRUPAAZOTY":"ATT.WA",
+    "PGE":       "PGE.WA",
+    "FORTE":     "FTE.WA",
+    "SANOK":     "SRB.WA",
+    "ZABKA":     "ZBK.WA",
+    # No Yahoo mapping for: CYBERFLKS, CREOTECH-PDA, MEDINICE, DIAG,
+    # ETFBM40TR, ETFBTBSP, ETFPZUWORLD, ETFBSPXPL, ETFBW20TR
+    # → Biznesradar L4 live-price fallback handles these
 }
 
 # Static realistic fallback data (prices/ratios as of 2026-07 for L3 fallback)
@@ -261,9 +270,7 @@ class StockwatchScraper:
 
     def fetch_yfinance_fallback(self, ticker):
         """Fetches fundamental ratios and price from Yahoo Finance as level-3 fallback"""
-        symbol = YFIN_TICKERS.get(ticker)
-        if not symbol:
-            return None
+        symbol = YFIN_TICKERS.get(ticker, f"{ticker}.WA")
         try:
             yft = yf.Ticker(symbol)
             info = yft.info
